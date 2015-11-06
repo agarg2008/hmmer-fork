@@ -1689,6 +1689,40 @@ p7_tophits_TabularDomains(FILE *ofp, char *qname, char *qacc, P7_TOPHITS *th, P7
   return eslOK;
 }
 
+int
+p7_tophits_TabularXCus(FILE *ofp, char *qname, char *qacc, P7_TOPHITS *th, P7_PIPELINE *pli, int limit,
+                             char *seq) {
+    if (limit < 1) {
+        return p7_tophits_TabularXfam(ofp, qname, qacc, th, pli);
+    }
+    int h;
+    int status;
+
+
+    if (pli->long_targets) {
+        fprintf(ofp, "%s%s", seq, ";");
+        for (h = 0; h < th->N && h < limit; h++)
+            if (th->hit[h]->flags & p7_IS_REPORTED) {
+                fprintf(ofp, "%s,%s,%.1f,%.2g,%.1f,%d,%d,%s,%d,%d,%d,%d;",
+                        (pli->mode == p7_SCAN_MODELS ? th->hit[h]->acc : qacc),
+                        qname,
+                        th->hit[h]->score,
+                        exp(th->hit[h]->lnP),
+                        th->hit[h]->dcl[0].dombias * eslCONST_LOG2R, /* convert nats to bits at last moment */
+                        th->hit[h]->dcl[0].ad->hmmfrom,
+                        th->hit[h]->dcl[0].ad->hmmto,
+                        (th->hit[h]->dcl[0].iali < th->hit[h]->dcl[0].jali ? "+" : "-"),
+                        th->hit[h]->dcl[0].iali,
+                        th->hit[h]->dcl[0].jali,
+                        th->hit[h]->dcl[0].ienv,
+                        th->hit[h]->dcl[0].jenv
+                );
+            }
+        fprintf(ofp, "%s", "\n");
+
+    }
+}
+
 
 /* Function:  p7_tophits_TabularXfam()
  * Synopsis:  Output parsable table(s) of hits, in format desired by Xfam.
