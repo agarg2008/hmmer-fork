@@ -37,6 +37,7 @@ typedef struct {
 } WORKER_INFO;
 
 #define REPOPTS     "-E,-T,--cut_ga,--cut_nc,--cut_tc"
+#define REPOPTS     "-E,-T,--cut_ga,--cut_nc,--cut_tc,-N"
 #define DOMREPOPTS  "--domE,--domT,--cut_ga,--cut_nc,--cut_tc"
 #define INCOPTS     "--incE,--incT,--cut_ga,--cut_nc,--cut_tc"
 #define INCDOMOPTS  "--incdomE,--incdomT,--cut_ga,--cut_nc,--cut_tc"
@@ -59,7 +60,7 @@ static ESL_OPTIONS options[] = {
   { "--noali",      eslARG_NONE,   FALSE, NULL, NULL,    NULL,  NULL,  NULL,            "don't output alignments, so output is smaller",                 2 },
   { "--notextw",    eslARG_NONE,    NULL, NULL, NULL,    NULL,  NULL, "--textw",        "unlimit ASCII text output line width",                          2 },
   { "--textw",      eslARG_INT,    "120", NULL, "n>=120",NULL,  NULL, "--notextw",      "set max width of ASCII text output lines",                      2 },
-
+  { "-N",           eslARG_INT,    FALSE, NULL, "n>=1",   NULL,  NULL,  REPOPTS,         "report only top N models in output",                            4 },
   /* Control of reporting thresholds */
   { "-E",           eslARG_REAL,  "10.0", NULL, "x>0",   NULL,  NULL,  REPOPTS,         "report models <= this E-value threshold in output",             4 },
   { "-T",           eslARG_REAL,   FALSE, NULL, NULL,    NULL,  NULL,  REPOPTS,         "report models >= this score threshold in output",               4 },
@@ -229,6 +230,7 @@ output_header(FILE *ofp, ESL_GETOPTS *go, char *hmmfile, char *seqfile)
   if (esl_opt_IsUsed(go, "--notextw")   && fprintf(ofp, "# max ASCII text line length:      unlimited\n")                                           < 0) ESL_EXCEPTION_SYS(eslEWRITE, "write failed");
   if (esl_opt_IsUsed(go, "--textw")     && fprintf(ofp, "# max ASCII text line length:      %d\n",            esl_opt_GetInteger(go, "--textw"))    < 0) ESL_EXCEPTION_SYS(eslEWRITE, "write failed");
 
+  if (esl_opt_IsUsed(go, "-N")          && fprintf(ofp, "# profile reporting threshold:     N-value <= %d\n", esl_opt_GetInteger(go, "-N"))         < 0) ESL_EXCEPTION_SYS(eslEWRITE, "write failed");
   if (esl_opt_IsUsed(go, "-E")          && fprintf(ofp, "# profile reporting threshold:     E-value <= %g\n", esl_opt_GetReal(go, "-E"))            < 0) ESL_EXCEPTION_SYS(eslEWRITE, "write failed");
   if (esl_opt_IsUsed(go, "-T")          && fprintf(ofp, "# profile reporting threshold:     score >= %g\n",   esl_opt_GetReal(go, "-T"))            < 0) ESL_EXCEPTION_SYS(eslEWRITE, "write failed");
   if (esl_opt_IsUsed(go, "--incE")      && fprintf(ofp, "# profile inclusion threshold:     E-value <= %g\n", esl_opt_GetReal(go, "--incE"))        < 0) ESL_EXCEPTION_SYS(eslEWRITE, "write failed");
@@ -307,7 +309,7 @@ serial_master(ESL_GETOPTS *go, struct cfg_s *cfg)
 {
   FILE            *ofp      = stdout;	         /* output file for results (default stdout)        */
   FILE            *tblfp    = NULL;		 /* output stream for tabular per-seq (--tblout)    */
-  FILE            *dfamtblfp    = NULL;            /* output stream for tabular Dfam format (--dfamtblout)    */
+  FILE            *dfamtblfp    = stdout;            /* output stream for tabular Dfam format (--dfamtblout)    */
   FILE            *aliscoresfp  = NULL;            /* output stream for alignment scores (--aliscoresout)    */
 
   P7_BG           *bg_manual  = NULL;
@@ -557,10 +559,18 @@ serial_master(ESL_GETOPTS *go, struct cfg_s *cfg)
       p7_tophits_Targets(ofp, info->th, info->pli, textw); if (fprintf(ofp, "\n\n") < 0) ESL_EXCEPTION_SYS(eslEWRITE, "write failed");
       p7_tophits_Domains(ofp, info->th, info->pli, textw); if (fprintf(ofp, "\n\n") < 0) ESL_EXCEPTION_SYS(eslEWRITE, "write failed");
 
+      int limit  = -1;
+      if (esl_opt_IsUsed(go, "-N")) {limit = esl_opt_GetInteger(go, "-N"); }
+
+      ESL_SQ        *temp_sq = NULL;
+      temp_sq =  esl_sq_Create();
+      esl_sq_Copy(info->qsq,temp_sq);
+
       if (tblfp)     p7_tophits_TabularTargets(tblfp,    qsq->name, qsq->acc, info->th, info->pli, (nquery == 1));
-      if (dfamtblfp) p7_tophits_TabularXfam(dfamtblfp,   qsq->name, NULL, info->th, info->pli);
+      if (dfamtblfp) p7_tophits_TabularXCus(dfamtblfp,   qsq->name, NULL, info->th, info->pli, limit, temp_sq->seq);
       if (aliscoresfp) p7_tophits_AliScores(aliscoresfp, qsq->name, info->th );
 
+      esl_sq_Destroy(temp_sq);
 
       esl_stopwatch_Stop(w);
       info->pli->nseqs = 1;
