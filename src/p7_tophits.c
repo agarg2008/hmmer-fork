@@ -1700,7 +1700,8 @@ p7_tophits_TabularXCus(FILE *ofp, char *qname, char *qacc, P7_TOPHITS *th, P7_PI
 
 
     if (pli->long_targets) {
-        fprintf(ofp, "%s%s", seq, ";");
+        if(th->N > 0)
+            fprintf(ofp, "%s%s", seq, ";");
         for (h = 0; h < th->N && h < limit; h++)
             if (th->hit[h]->flags & p7_IS_REPORTED) {
                 fprintf(ofp, "%s,%s,%.1f,%.2g,%.1f,%d,%d,%s,%d,%d,%d,%d;",

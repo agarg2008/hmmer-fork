@@ -567,7 +567,7 @@ serial_master(ESL_GETOPTS *go, struct cfg_s *cfg)
       esl_sq_Copy(info->qsq,temp_sq);
 
       if (tblfp)     p7_tophits_TabularTargets(tblfp,    qsq->name, qsq->acc, info->th, info->pli, (nquery == 1));
-      if (dfamtblfp) p7_tophits_TabularXCus(dfamtblfp,   qsq->name, NULL, info->th, info->pli, limit, temp_sq->seq);
+      if (dfamtblfp) p7_tophits_TabularXCus(dfamtblfp,   qsq->name, qsq->acc, info->th, info->pli, limit, temp_sq->seq);
       if (aliscoresfp) p7_tophits_AliScores(aliscoresfp, qsq->name, info->th );
 
       esl_sq_Destroy(temp_sq);
