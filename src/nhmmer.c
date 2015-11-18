@@ -1363,8 +1363,6 @@ thread_loop(WORKER_INFO *info, ID_LENGTH_LIST *id_length_list, ESL_THREADS *obj,
       for (i=0; i<block->count; i++) {
           ESL_SQ *current_sq = &block->list[i];
           current_sq->idx = seqid;
-          current_sq->seq= malloc(sizeof(char) * 256);
-          esl_abc_Textize(current_sq->abc, current_sq->dsq, current_sq->n, current_sq->seq);
           add_id_length(id_length_list, seqid, current_sq->L);
         seqid++;
 

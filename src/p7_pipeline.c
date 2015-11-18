@@ -1634,6 +1634,8 @@ p7_Pipeline_LongTarget(P7_PIPELINE *pli, P7_OPROFILE *om, P7_SCOREDATA *data,
           seq_start += seq_data.length - 2;
       }
 
+      char *temp_seq = malloc(sizeof(char) * 256);
+      esl_abc_Textize(sq->abc, sq->dsq, sq->n, temp_seq);
       status = p7_pli_postSSV_LongTarget(pli, om, bg, hitlist, data,
             (fmf != NULL ? seq_data.target_id     : seqidx),
             window->n, window->length, subseq,
@@ -1648,7 +1650,7 @@ p7_Pipeline_LongTarget(P7_PIPELINE *pli, P7_OPROFILE *om, P7_SCOREDATA *data,
             (fmf != NULL ? window->complementarity : complementarity),
             &vit_windowlist,
             pli_tmp,
-            sq->seq
+            temp_seq
         );
         if (status != eslOK) goto ERROR;
 
