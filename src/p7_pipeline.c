@@ -1030,7 +1030,7 @@ static int
 p7_pli_postViterbi_LongTarget(P7_PIPELINE *pli, P7_OPROFILE *om, P7_BG *bg, P7_TOPHITS *hitlist, const P7_SCOREDATA *data,
     int64_t seqidx, int window_start, int window_len, ESL_DSQ *subseq,
     int seq_start, char *seq_name, char *seq_source, char* seq_acc, char* seq_desc, int seq_len,
-    int complementarity, int *overlap, P7_PIPELINE_LONGTARGET_OBJS *pli_tmp
+    int complementarity, int *overlap, P7_PIPELINE_LONGTARGET_OBJS *pli_tmp, char *input_seq
 )
 {
   P7_DOMAIN        *dom     = NULL;     /* convenience variable, ptr to current domain */
@@ -1197,6 +1197,8 @@ p7_pli_postViterbi_LongTarget(P7_PIPELINE *pli, P7_OPROFILE *om, P7_BG *bg, P7_T
       hit->dcl[0].dombias  = dom_bias;
       hit->sum_score  = hit->score  = hit->dcl[0].bitscore = dom_score;
       hit->sum_lnP    = hit->lnP    = hit->dcl[0].lnP  = dom_lnP;
+      if(input_seq != NULL)
+          hit->seq= input_seq;
 
 
       if (pli->mode == p7_SEARCH_SEQS)
@@ -1298,7 +1300,7 @@ p7_pli_postSSV_LongTarget(P7_PIPELINE *pli, P7_OPROFILE *om, P7_BG *bg, P7_TOPHI
     int64_t seqidx, uint64_t window_start, int window_len, ESL_DSQ *subseq,
     uint64_t seq_start, char *seq_name, char *seq_source, char* seq_acc, char* seq_desc, int seq_len,
     float nullsc, float usc, int complementarity, P7_HMM_WINDOWLIST *vit_windowlist,
-    P7_PIPELINE_LONGTARGET_OBJS *pli_tmp
+    P7_PIPELINE_LONGTARGET_OBJS *pli_tmp, char *input_seq
 )
 {
   float            filtersc;           /* HMM null filter score                   */
@@ -1386,7 +1388,8 @@ p7_pli_postSSV_LongTarget(P7_PIPELINE *pli, P7_OPROFILE *om, P7_BG *bg, P7_TOPHI
         window_start+vit_windowlist->windows[i].n-1, vit_windowlist->windows[i].length,
         subseq + vit_windowlist->windows[i].n - 1,
         seq_start, seq_name, seq_source, seq_acc, seq_desc, seq_len, complementarity, &overlap,
-        pli_tmp
+        pli_tmp,
+        input_seq
     );
     if (overlap == -1 && i<vit_windowlist->count-1) {
       overlap = ESL_MAX(0,  vit_windowlist->windows[i].n + vit_windowlist->windows[i].length - vit_windowlist->windows[i+1].n );
@@ -1644,7 +1647,8 @@ p7_Pipeline_LongTarget(P7_PIPELINE *pli, P7_OPROFILE *om, P7_SCOREDATA *data,
             usc,
             (fmf != NULL ? window->complementarity : complementarity),
             &vit_windowlist,
-            pli_tmp
+            pli_tmp,
+            sq->seq
         );
         if (status != eslOK) goto ERROR;
 

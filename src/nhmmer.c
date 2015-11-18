@@ -1362,7 +1362,16 @@ thread_loop(WORKER_INFO *info, ID_LENGTH_LIST *id_length_list, ESL_THREADS *obj,
       seqid = block->first_seqidx;
       for (i=0; i<block->count; i++) {
         block->list[i].idx = seqid;
-        add_id_length(id_length_list, seqid, block->list[i].L);
+          ESL_SQ        *temp_sq = NULL;
+          temp_sq =  esl_sq_Create();
+          ESL_SQ testSeq = block->list[i];
+          esl_sq_Copy(&testSeq,temp_sq);
+//          block->list[i].seq= &temp_sq->seq;
+//          temp_sq->seq;
+          block->list[i].seq= malloc(sizeof(char) * strlen(temp_sq->seq));
+          strcpy(block->list[i].seq, temp_sq->seq);
+          esl_sq_Destroy(temp_sq);
+          add_id_length(id_length_list, seqid, block->list[i].L);
         seqid++;
 
         if (   seqid == n_targetseqs // hit the sequence target
