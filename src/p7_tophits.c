@@ -321,10 +321,30 @@ hit_sorter_by_modelname_aliposition(const void *vh1, const void *vh2)
  *
  * Returns:   <eslOK> on success.
  */
-int p7_tophits_PrintHtsSummary(FILE *ofp, P7_TOPHITS *th) {
-  if (!th->is_sorted_by_sortkey) return eslFAIL; /* Die if unsorted. */
-  for(int i = 0; i < th->N; ++i) {
-    
+int p7_tophits_PrintHtsSummary(FILE *ofp, P7_TOPHITS *th, const char *qname, const char *qacc) {
+  int d, h;
+  for(h = 0; h < th->N; ++h) {
+    if (th->hit[h]->flags & p7_IS_REPORTED) {
+        d    = th->hit[h]->best_domain;
+            if (fprintf(ofp, "%s\t%s\t%s\t%s\t%d\t%d\t%d\t%d\t%d\t%d\t%ld\t%c\t%g\t%.1f\t%.1f\t%s\n",
+                th->hit[h]->name,
+                th->hit[h]->acc,
+                qname,
+                (qacc && *qacc) ? qacc : "-",
+                th->hit[h]->dcl[d].ad->hmmfrom,
+                th->hit[h]->dcl[d].ad->hmmto,
+                th->hit[h]->dcl[d].iali,
+                th->hit[h]->dcl[d].jali,
+                th->hit[h]->dcl[d].ienv,
+                th->hit[h]->dcl[d].jenv,
+                th->hit[h]->dcl[0].ad->L,
+                (th->hit[h]->dcl[d].iali < th->hit[h]->dcl[d].jali ? '+' : '-'),
+                exp(th->hit[h]->lnP),
+                th->hit[h]->score,
+                th->hit[h]->dcl[d].dombias * eslCONST_LOG2R, /* convert NATS to BITS at last moment */
+                th->hit[h]->desc ? th->hit[h]->desc: "-") < 0)
+                  ESL_EXCEPTION_SYS(eslEWRITE, "tabular per-sequence hit list: write failed");
+    }
   }
   return eslOK;
 }

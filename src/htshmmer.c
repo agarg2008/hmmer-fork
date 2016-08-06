@@ -112,8 +112,8 @@ static ESL_OPTIONS options[] = {
   /* Control of output */
   { "-o",           eslARG_OUTFILE,      NULL, NULL, NULL,    NULL,  NULL,  NULL,              "direct output to file <f>, not stdout",                      2 },
   { "--stats",           eslARG_OUTFILE,      NULL, NULL, NULL,    NULL,  NULL,  NULL,              "direct stats output to file <f>, not stderr",           2 },
-  { "--acc",        eslARG_NONE,        FALSE, NULL, NULL,    NULL,  NULL,  NULL,            "prefer accessions over names in output",                       2 },
   { "--noali",      eslARG_NONE,        FALSE, NULL, NULL,    NULL,  NULL,  NULL,            "don't output alignments, so output is smaller",                2 },
+  { "--acc",      eslARG_NONE,        FALSE, NULL, NULL,    NULL,  NULL,  NULL,            "don't output alignments, so output is smaller",                2 },
   { "--noheader",      eslARG_NONE,        FALSE, NULL, NULL,    NULL,  NULL,  NULL,            "Don't output header",                                     2 },
   /* Control of scoring system */
   { "--singlemx",   eslARG_NONE,        FALSE,   NULL, NULL,    NULL,  NULL,   "",           "use substitution score matrix w/ single-sequence MSA-format inputs",  3 },
@@ -155,8 +155,6 @@ static ESL_OPTIONS options[] = {
 #endif
 
 /* Other options */
-  { "--tformat",    eslARG_STRING,       NULL, NULL, NULL,    NULL,  NULL,           NULL,     "assert target <seqdb> is in format <s>",                        12 },
-  { "--qformat",    eslARG_STRING,       NULL, NULL, NULL,    NULL,  NULL,           NULL,     "assert query <seqfile> is in format <s>",                       12 },
   { "--nonull2",    eslARG_NONE,         NULL, NULL, NULL,    NULL,  NULL,           NULL,     "turn off biased composition score corrections",                 12 },
   { "-Z",           eslARG_REAL,        FALSE, NULL, "x>0",   NULL,  NULL,           NULL,     "set database size (Megabases) to <x> for E-value calculations", 12 },
   { "--seed",       eslARG_INT,          "42", NULL, "n>=0",  NULL,  NULL,           NULL,     "set RNG seed to <n> (if 0: one-time arbitrary seed)",           12 },
@@ -311,7 +309,6 @@ output_header(FILE *ofp, const ESL_GETOPTS *go, char *queryfile, char *seqfile, 
   if (fprintf(ofp, "# target sequence database:        %s\n", seqfile)                                                                                < 0) ESL_EXCEPTION_SYS(eslEWRITE, "write failed");
   if (esl_opt_IsUsed(go, "-o")              && fprintf(ofp, "# output directed to file:         %s\n",            esl_opt_GetString(go, "-o"))             < 0) ESL_EXCEPTION_SYS(eslEWRITE, "write failed");
 
-  if (esl_opt_IsUsed(go, "--acc")        && fprintf(ofp, "# prefer accessions over names:    yes\n")                                                  < 0) ESL_EXCEPTION_SYS(eslEWRITE, "write failed");
   if (esl_opt_IsUsed(go, "--noali")      && fprintf(ofp, "# show alignments in output:       no\n")                                                   < 0) ESL_EXCEPTION_SYS(eslEWRITE, "write failed");
   if (esl_opt_IsUsed(go, "--singlemx")   && fprintf(ofp, "# Use score matrix for 1-seq MSAs:  on\n")                                                  < 0) ESL_EXCEPTION_SYS(eslEWRITE, "write failed");
   if (esl_opt_IsUsed(go, "--popen")      && fprintf(ofp, "# gap open probability:            %f\n",             esl_opt_GetReal   (go, "--popen"))    < 0) ESL_EXCEPTION_SYS(eslEWRITE, "write failed");
@@ -683,7 +680,7 @@ serial_master(ESL_GETOPTS *go, struct cfg_s *cfg)
 
       p7_tophits_SortBySortkey(info->th);
       p7_tophits_Threshold(info->th, info->pli);
-      p7_tophits_PrintHtsSummary(ofp, info->th);
+      p7_tophits_PrintHtsSummary(ofp, info->th, hmm->name, hmm->acc);
 
 
       //tally up total number of hits and target coverage
@@ -700,7 +697,7 @@ serial_master(ESL_GETOPTS *go, struct cfg_s *cfg)
 
       esl_stopwatch_Stop(w);
 
-      p7_pli_Statistics(statsfp, info->pli, w);
+      //p7_pli_Statistics(statsfp, info->pli, w);
 
 //      esl_stopwatch_Display(stdout, ssv_watch_master,     "# SSV time: ");
 //      esl_stopwatch_Display(stdout, postssv_watch_master, "# POSTSSV time: ");
@@ -749,7 +746,7 @@ serial_master(ESL_GETOPTS *go, struct cfg_s *cfg)
 
  /* Terminate outputs - any last words?
    */
-  if (statsfp)      { if (fprintf(statsfp, "#[ok]\n") < 0) ESL_EXCEPTION_SYS(eslEWRITE, "write failed"); }
+  //if (statsfp)      { if (fprintf(statsfp, "#[ok]\n") < 0) ESL_EXCEPTION_SYS(eslEWRITE, "write failed"); }
 
   /* Cleanup - prepare for successful exit
    */
