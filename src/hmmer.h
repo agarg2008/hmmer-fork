@@ -1716,6 +1716,7 @@ extern int p7_tophits_TabularXfam(FILE *ofp, char *qname, char *qacc, P7_TOPHITS
 extern int p7_tophits_TabularTail(FILE *ofp, const char *progname, enum p7_pipemodes_e pipemode, 
 				  const char *qfile, const char *tfile, const ESL_GETOPTS *go);
 extern int p7_tophits_AliScores(FILE *ofp, char *qname, P7_TOPHITS *th );
+extern int p7_tophits_PrintHtsSummary(FILE *ofp, P7_TOPHITS *th); // Needed for htshmmer.
 
 /* p7_trace.c */
 extern P7_TRACE *p7_trace_Create(void);

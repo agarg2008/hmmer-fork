@@ -1634,7 +1634,6 @@ p7_Pipeline_LongTarget(P7_PIPELINE *pli, P7_OPROFILE *om, P7_SCOREDATA *data,
         if (window->complementarity == p7_COMPLEMENT)
           seq_start += seq_data.length - 2;
       }
-
       status = p7_pli_postSSV_LongTarget(pli, om, bg, hitlist, data,
             (fmf != NULL ? seq_data.target_id     : seqidx),
             window->n, window->length, subseq,

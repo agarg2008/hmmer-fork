@@ -312,6 +312,23 @@ hit_sorter_by_modelname_aliposition(const void *vh1, const void *vh2)
   else                                        return  (h1->dcl[0].iali > h2->dcl[0].iali ? 1 : -1 );
 }
 
+/* Function:  p7_tophits_PrintHtsSummary()
+ * Synopsis:  Prints alignment results for fastq data.
+ *
+ * Purpose:   Sorts a top hit list. After this call,
+ *            <h->hit[i]> points to the i'th ranked 
+ *            <P7_HIT> for all <h->N> hits.
+ *
+ * Returns:   <eslOK> on success.
+ */
+int p7_tophits_PrintHtsSummary(FILE *ofp, P7_TOPHITS *th) {
+  if (!th->is_sorted_by_sortkey) return eslFAIL; /* Die if unsorted. */
+  for(int i = 0; i < th->N; ++i) {
+    
+  }
+  return eslOK;
+}
+
 
 /* Function:  p7_tophits_SortBySortkey()
  * Synopsis:  Sorts a hit list.
