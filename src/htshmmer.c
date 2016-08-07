@@ -68,15 +68,8 @@ typedef struct {
   P7_PIPELINE      *pli;         /* work pipeline                           */
   P7_TOPHITS       *th;          /* top hit results                         */
   P7_OPROFILE      *om;          /* optimized query profile                 */
-  FM_CFG           *fm_cfg;      /* global data for FM-index for fast SSV */
   P7_SCOREDATA     *scoredata;   /* hmm-specific data used by nhmmer */
 } WORKER_INFO;
-
-typedef struct {
-  FM_DATA  *fmf;
-  FM_DATA  *fmb;
-  int      active;  //TRUE is worker is supposed to work on the contents, FALSE otherwise
-} FM_THREAD_INFO;
 
 
 typedef struct {
@@ -142,18 +135,6 @@ static ESL_OPTIONS options[] = {
   { "--dna",        eslARG_NONE,        FALSE, NULL, NULL,   "--rna", NULL,   NULL,          "input alignment is DNA sequence data",                         8 },
   { "--rna",        eslARG_NONE,        FALSE, NULL, NULL,   "--dna",  NULL,  NULL,          "input alignment is RNA sequence data",                         8 },
 
-#if defined (p7_IMPL_SSE)
-  /* Control of FM pruning/extension */
-  { "--seed_max_depth",    eslARG_INT,          "15", NULL, NULL,    NULL,  NULL, NULL,          "seed length at which bit threshold must be met",             9 },
-  { "--seed_sc_thresh",    eslARG_REAL,         "15", NULL, NULL,    NULL,  NULL, NULL,          "Default req. score for FM seed (bits)",                      9 },
-  { "--seed_sc_density",   eslARG_REAL,        "0.8", NULL, NULL,    NULL,  NULL, NULL,          "seed must maintain this bit density from one of two ends",   9 },
-  { "--seed_drop_max_len", eslARG_INT,           "4", NULL, NULL,    NULL,  NULL, NULL,          "maximum run length with score under (max - [fm_drop_lim])",  9 },
-  { "--seed_drop_lim",     eslARG_REAL,        "0.3", NULL, NULL,    NULL,  NULL, NULL,          "in seed, max drop in a run of length [fm_drop_max_len]",     9 },
-  { "--seed_req_pos",      eslARG_INT,           "5", NULL, NULL,    NULL,  NULL, NULL,          "minimum number consecutive positive scores in seed" ,        9 },
-  { "--seed_consens_match", eslARG_INT,         "11", NULL, NULL,    NULL,  NULL, NULL,          "<n> consecutive matches to consensus will override score threshold" , 9 },
-  { "--seed_ssv_length",   eslARG_INT,          "70", NULL, NULL,    NULL,  NULL, NULL,          "length of window around FM seed to get full SSV diagonal",   9 },
-#endif
-
 /* Other options */
   { "--nonull2",    eslARG_NONE,         NULL, NULL, NULL,    NULL,  NULL,           NULL,     "turn off biased composition score corrections",                 12 },
   { "-Z",           eslARG_REAL,        FALSE, NULL, "x>0",   NULL,  NULL,           NULL,     "set database size (Megabases) to <x> for E-value calculations", 12 },
@@ -183,7 +164,7 @@ static ESL_OPTIONS options[] = {
 
 
 
-#ifdef HMMER_THREADS 
+#ifdef HMMER_THREADS
   { "--cpu",        eslARG_INT, NULL,"HMMER_NCPU","n>=0",NULL,  NULL,  CPUOPTS,         "number of parallel CPU workers to use for multithreads",      12 },
 #endif
   {  0, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
@@ -191,7 +172,7 @@ static ESL_OPTIONS options[] = {
 
 
 /* struct cfg_s : "Global" application configuration shared by all threads/processes
- * 
+ *
  * This structure is passed to routines within main.c, as a means of semi-encapsulation
  * of shared data amongst different parallel processes (threads or MPI processes).
  */
@@ -234,9 +215,9 @@ process_commandline(int argc, char **argv, ESL_GETOPTS **ret_go, char **ret_quer
   if (esl_opt_ProcessEnvironment(go)         != eslOK)  { if (printf("Failed to process environment: %s\n", go->errbuf) < 0) ESL_XEXCEPTION_SYS(eslEWRITE, "write failed"); goto FAILURE; }
   if (esl_opt_ProcessCmdline(go, argc, argv) != eslOK)  { if (printf("Failed to parse command line: %s\n", go->errbuf)  < 0) ESL_XEXCEPTION_SYS(eslEWRITE, "write failed"); goto FAILURE; }
   if (esl_opt_VerifyConfig(go)               != eslOK)  { if (printf("Failed to parse command line: %s\n", go->errbuf)  < 0) ESL_XEXCEPTION_SYS(eslEWRITE, "write failed"); goto FAILURE; }
- 
+
   /* help format: */
-  if (esl_opt_GetBoolean(go, "-h") == TRUE) 
+  if (esl_opt_GetBoolean(go, "-h") == TRUE)
     {
       p7_banner(stdout, argv[0], banner);
       esl_usage(stdout, argv[0], usage);
@@ -286,14 +267,14 @@ process_commandline(int argc, char **argv, ESL_GETOPTS **ret_go, char **ret_quer
 
   *ret_go = go;
   return eslOK;
-  
+
  FAILURE:  /* all errors handled here are user errors, so be polite.  */
   esl_usage(stdout, argv[0], usage);
   if (puts("\nwhere basic options are:") < 0) ESL_XEXCEPTION_SYS(eslEWRITE, "write failed");
   esl_opt_DisplayHelp(stdout, go, 1, 2, 80); /* 1= group; 2 = indentation; 80=textwidth*/
   if (printf("\nTo see more help on available options, do %s -h\n\n", argv[0]) < 0) ESL_XEXCEPTION_SYS(eslEWRITE, "write failed");
   esl_getopts_Destroy(go);
-  exit(1);  
+  exit(1);
 
  ERROR:
   if (go) esl_getopts_Destroy(go);
@@ -309,7 +290,6 @@ output_header(FILE *ofp, const ESL_GETOPTS *go, char *queryfile, char *seqfile, 
   if (fprintf(ofp, "# target sequence database:        %s\n", seqfile)                                                                                < 0) ESL_EXCEPTION_SYS(eslEWRITE, "write failed");
   if (esl_opt_IsUsed(go, "-o")              && fprintf(ofp, "# output directed to file:         %s\n",            esl_opt_GetString(go, "-o"))             < 0) ESL_EXCEPTION_SYS(eslEWRITE, "write failed");
 
-  if (esl_opt_IsUsed(go, "--noali")      && fprintf(ofp, "# show alignments in output:       no\n")                                                   < 0) ESL_EXCEPTION_SYS(eslEWRITE, "write failed");
   if (esl_opt_IsUsed(go, "--singlemx")   && fprintf(ofp, "# Use score matrix for 1-seq MSAs:  on\n")                                                  < 0) ESL_EXCEPTION_SYS(eslEWRITE, "write failed");
   if (esl_opt_IsUsed(go, "--popen")      && fprintf(ofp, "# gap open probability:            %f\n",             esl_opt_GetReal   (go, "--popen"))    < 0) ESL_EXCEPTION_SYS(eslEWRITE, "write failed");
   if (esl_opt_IsUsed(go, "--pextend")    && fprintf(ofp, "# gap extend probability:          %f\n",             esl_opt_GetReal   (go, "--pextend"))  < 0) ESL_EXCEPTION_SYS(eslEWRITE, "write failed");
@@ -334,17 +314,6 @@ output_header(FILE *ofp, const ESL_GETOPTS *go, char *queryfile, char *seqfile, 
 
   if (esl_opt_IsUsed(go, "--dna")        && fprintf(ofp, "# input query is asserted as:      DNA\n")                                                  < 0) ESL_EXCEPTION_SYS(eslEWRITE, "write failed");
   if (esl_opt_IsUsed(go, "--rna")        && fprintf(ofp, "# input query is asserted as:      RNA\n")                                                  < 0) ESL_EXCEPTION_SYS(eslEWRITE, "write failed");
-
-#if defined (p7_IMPL_SSE)
-  if (esl_opt_IsUsed(go, "--seed_max_depth")    && fprintf(ofp, "# FM Seed length:                  %d\n",             esl_opt_GetInteger(go, "--seed_max_depth"))    < 0) ESL_EXCEPTION_SYS(eslEWRITE, "write failed");
-  if (esl_opt_IsUsed(go, "--seed_sc_thresh")    && fprintf(ofp, "# FM score threshhold (bits):      %g\n",             esl_opt_GetReal(go, "--seed_sc_thresh"))    < 0) ESL_EXCEPTION_SYS(eslEWRITE, "write failed");
-  if (esl_opt_IsUsed(go, "--seed_sc_density")   && fprintf(ofp, "# FM score density (bits/pos):     %g\n",             esl_opt_GetReal(go, "--seed_sc_density"))        < 0) ESL_EXCEPTION_SYS(eslEWRITE, "write failed");
-  if (esl_opt_IsUsed(go, "--seed_drop_max_len") && fprintf(ofp, "# FM max neg-growth length:        %d\n",             esl_opt_GetInteger(go, "--seed_drop_max_len")) < 0) ESL_EXCEPTION_SYS(eslEWRITE, "write failed");
-  if (esl_opt_IsUsed(go, "--seed_drop_lim")     && fprintf(ofp, "# FM max run drop:                 %g\n",             esl_opt_GetReal(go, "--seed_drop_lim"))        < 0) ESL_EXCEPTION_SYS(eslEWRITE, "write failed");
-  if (esl_opt_IsUsed(go, "--seed_req_pos")      && fprintf(ofp, "# FM req positive run length:      %d\n",             esl_opt_GetInteger(go, "--seed_req_pos"))      < 0) ESL_EXCEPTION_SYS(eslEWRITE, "write failed");
-  if (esl_opt_IsUsed(go, "--seed_consens_match") && fprintf(ofp, "# FM consec consensus match req:   %d\n",             esl_opt_GetInteger(go, "--seed_consens_match"))  < 0) ESL_EXCEPTION_SYS(eslEWRITE, "write failed");
-  if (esl_opt_IsUsed(go, "--seed_ssv_length")   && fprintf(ofp, "# FM len used for Vit window:      %d\n",             esl_opt_GetInteger(go, "--seed_ssv_length"))   < 0) ESL_EXCEPTION_SYS(eslEWRITE, "write failed");
-#endif
 
 
   if (esl_opt_IsUsed(go, "--nonull2")    && fprintf(ofp, "# null2 bias corrections:          off\n")                                                   < 0) ESL_EXCEPTION_SYS(eslEWRITE, "write failed");
@@ -372,8 +341,8 @@ output_header(FILE *ofp, const ESL_GETOPTS *go, char *queryfile, char *seqfile, 
 int
 main(int argc, char **argv)
 {
-  ESL_GETOPTS     *go       = NULL;  
-  struct cfg_s     cfg;         
+  ESL_GETOPTS     *go       = NULL;
+  struct cfg_s     cfg;
   int              status   = eslOK;
 
   impl_Init();             /* processor specific initialization */
@@ -404,7 +373,7 @@ main(int argc, char **argv)
 /* serial_master()
  * The serial version of hmmsearch.
  * For each query HMM in <queryfile> search the database for hits.
- * 
+ *
  * A master can only return if it's successful. All errors are handled
  * immediately and fatally with p7_Fail().
  */
@@ -417,6 +386,7 @@ serial_master(ESL_GETOPTS *go, struct cfg_s *cfg)
   /*Some fraction of these will be used, depending on what sort of input is used for the query*/
   P7_HMMFILE      *hfp        = NULL;              /* open input HMM file    */
   P7_HMM          *hmm        = NULL;              /* one HMM query          */
+  P7_HMM          **hmms      = NULL;
   ESL_SQ          *qsq        = NULL;              /* query sequence         */
 
   int              dbformat  =  eslSQFILE_FASTA; /* format of dbfile          */
@@ -434,10 +404,6 @@ serial_master(ESL_GETOPTS *go, struct cfg_s *cfg)
   double           resCnt    = 0;
   /* used to keep track of the lengths of the sequences that are processed */
   ID_LENGTH_LIST  *id_length_list = NULL;
-
-  /* these variables are only used if db type is FM-index*/
-  FM_CFG      *fm_cfg       = NULL;
-  /* end FM-index-specific variables */
 
 
   int              ncpus    = 0;
@@ -578,13 +544,11 @@ serial_master(ESL_GETOPTS *go, struct cfg_s *cfg)
         }
       }
 
-      if (dbformat != eslSQFILE_FMINDEX) {
         if ( cfg->firstseq_key != NULL ) { //it's tempting to want to do this once and capture the offset position for future passes, but ncbi files make this non-trivial, so this keeps it general
           sstatus = esl_sqfile_PositionByKey(dbfp, cfg->firstseq_key);
           if (sstatus != eslOK)
             p7_Fail("Failure setting restrictdb_stkey to %d\n", cfg->firstseq_key);
         }
-      }
 
 
       /* Convert to an optimized model */
@@ -656,7 +620,7 @@ serial_master(ESL_GETOPTS *go, struct cfg_s *cfg)
     	  if ( info[0].pli->strands == p7_STRAND_BOTH)
     	    resCnt *= 2;
 
-      } else 
+      } else
           for (i = 0; i < infocnt; ++i)
             resCnt += info[i].pli->nres;
 
@@ -792,12 +756,6 @@ serial_master(ESL_GETOPTS *go, struct cfg_s *cfg)
    if (qsq)     esl_sq_Destroy(qsq);
 
    if (ofp != stdout) fclose(ofp);
-
-#if defined (p7_IMPL_SSE)
-   if (dbformat == eslSQFILE_FMINDEX) {
-     fm_configDestroy(fm_cfg);
-   }
-#endif
 
    return eslFAIL;
 }
@@ -975,7 +933,7 @@ thread_loop(WORKER_INFO *info, ID_LENGTH_LIST *id_length_list, ESL_THREADS *obj,
   if (sstatus == eslEOF) {
       /* wait for all the threads to complete */
       esl_threads_WaitForFinish(obj);
-      esl_workqueue_Complete(queue);  
+      esl_workqueue_Complete(queue);
     }
 
   esl_sq_Destroy(tmpsq);
@@ -983,7 +941,7 @@ thread_loop(WORKER_INFO *info, ID_LENGTH_LIST *id_length_list, ESL_THREADS *obj,
   return sstatus;
 }
 
-static void 
+static void
 pipeline_thread(void *arg)
 {
   int i;
@@ -993,7 +951,7 @@ pipeline_thread(void *arg)
   ESL_THREADS   *obj;
   ESL_SQ_BLOCK  *block = NULL;
   void          *newBlock;
-  
+
   impl_Init();
 
   obj = (ESL_THREADS *) arg;
@@ -1127,7 +1085,7 @@ add_id_length(ID_LENGTH_LIST *list, int id, int L)
 ERROR:
    return status;
 }
- 
+
 static int
 assign_Lengths(P7_TOPHITS *th, ID_LENGTH_LIST *id_length_list) {
 
