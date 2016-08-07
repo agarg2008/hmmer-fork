@@ -30,6 +30,10 @@
 #    include <stdarg.h>
 #endif
 
+#ifndef kroundup32
+#define kroundup32(x) (--(x), (x)|=(x)>>1, (x)|=(x)>>2, (x)|=(x)>>4, (x)|=(x)>>8, (x)|=(x)>>16, ++(x))
+#endif
+
 #if !NDEBUG
 #    define LDB(...) log_debug(_FUNCTION_MACRO_, __FILE__, __LINE__, ##__VA_ARGS__);
 #else
@@ -59,6 +63,36 @@ static inline void log_debug(const char *func, const char *filename, int line, c
 #else
 #define NHMMER_MAX_RESIDUE_COUNT (1024 * 256)  /* 1/4 Mb */
 #endif
+
+typedef struct {
+  P7_HMM      **h;
+  size_t        n;
+  size_t        m;
+} HMM_VEC;
+
+HMM_VEC p7_hmmvec_Fill(P7_HMMFILE *hfp, ESL_ALPHABET *abc) {
+  int status = eslOK;
+  HMM_VEC hv = (HMM_VEC) {NULL, 0uL, 4uL};
+  ESL_ALLOC(hv.h, 4uL * sizeof(P7_HMM *));
+  if(abc == NULL) p7_Fail("ESL_ALPHABET abc must be set to call %s.\n", __func__);
+  while((status = p7_hmmfile_Read(hfp, &abc, hv.h + hv.n)) == eslOK) {
+    if(++hv.n > hv.m) {
+      hv.m = hv.n; kroundup32(hv.m);
+      ESL_REALLOC(hv.h, hv.m * sizeof(P7_HMM *));
+    }
+  }
+  LDB("Successfully loaded %lu hmm profiles.\n", hv.n);
+  return hv;
+  ERROR:
+    p7_Fail("Could not allocate memory.\n");
+  return hv;
+}
+
+void p7_hmmvec_Destroy(HMM_VEC *hv) {
+  unsigned i = hv->n;
+  while(i) p7_hmm_Destroy(hv->h[--i]);
+  free(hv->h);
+}
 
 typedef struct {
 #ifdef HMMER_THREADS
@@ -386,7 +420,6 @@ serial_master(ESL_GETOPTS *go, struct cfg_s *cfg)
   /*Some fraction of these will be used, depending on what sort of input is used for the query*/
   P7_HMMFILE      *hfp        = NULL;              /* open input HMM file    */
   P7_HMM          *hmm        = NULL;              /* one HMM query          */
-  P7_HMM          **hmms      = NULL;
   ESL_SQ          *qsq        = NULL;              /* query sequence         */
 
   int              dbformat  =  eslSQFILE_FASTA; /* format of dbfile          */
@@ -450,22 +483,25 @@ serial_master(ESL_GETOPTS *go, struct cfg_s *cfg)
     abc     = esl_alphabet_Create(eslDNA);
   else if ( esl_opt_IsOn(go, "--rna") )
     abc     = esl_alphabet_Create(eslRNA);
+  if(!abc) fprintf(stderr, "Defaulting to DNA alphabet.\n"), abc = esl_alphabet_Create(eslDNA);
 
   LDB("Trying to open %s.\n", cfg->queryfile);
   status = p7_hmmfile_OpenE(cfg->queryfile, NULL, &hfp, errbuf);
 
   if      (status == eslENOTFOUND) {
     // File just doesn't exist
-    p7_Fail("File existence/permissions problem in trying to open query file %s.\n%s\n", cfg->queryfile, errbuf);
+    p7_Fail("File existence/permissions problem in  == NULLtrying to open query file %s.\n%s\n", cfg->queryfile, errbuf);
   } else if (status == eslOK) {
     //Successfully read HMM file
     qhstatus = p7_hmmfile_Read(hfp, &abc, &hmm);
     if (qhstatus != eslOK) p7_Fail("reading hmm from file %s (%d)\n", cfg->queryfile, qhstatus);
   }
+  fprintf(stderr, "abc: %p. ret: %i.\n", abc, qhstatus);
 
   /* Open the results output files */
   if (esl_opt_IsOn(go, "-o"))              { if ((ofp      = fopen(esl_opt_GetString(go, "-o"), "w")) == NULL) p7_Fail("Failed to open output file %s for writing\n",    esl_opt_GetString(go, "-o")); }
   if (esl_opt_IsOn(go, "--stats"))              { if ((statsfp      = fopen(esl_opt_GetString(go, "--stats"), "w")) == NULL) p7_Fail("Failed to open stats file %s for writing\n",    esl_opt_GetString(go, "-o")); }
+  LDB("out files open.\n");
 
 
 #ifdef HMMER_THREADS
@@ -479,13 +515,14 @@ serial_master(ESL_GETOPTS *go, struct cfg_s *cfg)
         queue = esl_workqueue_Create(ncpus * 2);
   }
 #endif
-
   infocnt = (ncpus) ? ncpus : 1;
+  LDB("infocnt: %i.\n", infocnt);
   ESL_ALLOC(info, sizeof(*info) * infocnt);
+  fprintf(stderr, "Trying to allocate.\n");
 
   if (! (abc->type == eslRNA || abc->type == eslDNA))
     p7_Fail("Invalid alphabet type in hmm for nhmmer. Expect DNA or RNA\n");
-
+  LDB("alphabet type: %i.\n", abc->type);
   if (qhstatus == eslOK) {
       /* One-time initializations after alphabet <abc> becomes known */
      output_header(ofp, go, cfg->queryfile, cfg->dbfile, ncpus);
@@ -502,6 +539,7 @@ serial_master(ESL_GETOPTS *go, struct cfg_s *cfg)
           info[i].queue = queue;
 #endif
       }
+      LDB("About to make blocks.\n");
 
 #ifdef HMMER_THREADS
       for (i = 0; i < ncpus * 2; ++i) {
@@ -519,6 +557,7 @@ serial_master(ESL_GETOPTS *go, struct cfg_s *cfg)
 
   /* Outer loop: over each query HMM or alignment in <queryfile>. */
   while (qhstatus == eslOK) {
+      LDB("Processing one thing.\n");
       P7_PROFILE      *gm      = NULL;
       P7_OPROFILE     *om      = NULL;       /* optimized query profile                  */
 
@@ -534,6 +573,7 @@ serial_master(ESL_GETOPTS *go, struct cfg_s *cfg)
       nquery++;
       resCnt = 0;
       esl_stopwatch_Start(w);
+      fprintf(stderr, "dbfp: %p.\n", dbfp);
 
       /* seqfile may need to be rewound (multiquery mode) */
       if (nquery > 1) {
@@ -543,6 +583,7 @@ serial_master(ESL_GETOPTS *go, struct cfg_s *cfg)
 
         }
       }
+      LDB("Checked for rewinding needs.\n");
 
         if ( cfg->firstseq_key != NULL ) { //it's tempting to want to do this once and capture the offset position for future passes, but ncbi files make this non-trivial, so this keeps it general
           sstatus = esl_sqfile_PositionByKey(dbfp, cfg->firstseq_key);
@@ -559,6 +600,7 @@ serial_master(ESL_GETOPTS *go, struct cfg_s *cfg)
 
       scoredata = p7_hmm_ScoreDataCreate(om, NULL);
 
+      LDB("Building info for queue.\n");
       for (i = 0; i < infocnt; ++i) {
           /* Create processing pipeline and hit list */
           info[i].th  = p7_tophits_Create();
