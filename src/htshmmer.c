@@ -167,8 +167,8 @@ static ESL_OPTIONS options[] = {
   { "--nobias",     eslARG_NONE,         NULL,      NULL, NULL,    NULL,  NULL, "--max",          "turn off composition bias filter",                             7 },
 
   /* Selecting the alphabet rather than autoguessing it */
-  { "--dna",        eslARG_NONE,        FALSE, NULL, NULL,   "--rna", NULL,   NULL,          "input alignment is DNA sequence data",                         8 },
-  { "--rna",        eslARG_NONE,        FALSE, NULL, NULL,   "--dna",  NULL,  NULL,          "input alignment is RNA sequence data",                         8 },
+  { "--dna",        eslARG_NONE,        FALSE, NULL, NULL,   "--rna", NULL,   NULL,           "input alignment is DNA sequence data",                         8 },
+  { "--rna",        eslARG_NONE,        FALSE, NULL, NULL,   "--dna",  NULL,  NULL,           "input alignment is RNA sequence data",                         8 },
 
 /* Other options */
   { "--nonull2",    eslARG_NONE,         NULL, NULL, NULL,    NULL,  NULL,           NULL,     "turn off biased composition score corrections",                 12 },
@@ -177,8 +177,9 @@ static ESL_OPTIONS options[] = {
   { "--w_beta",     eslARG_REAL,         NULL, NULL, NULL,    NULL,  NULL,           NULL,     "tail mass at which window length is determined",                12 },
   { "--w_length",   eslARG_INT,          NULL, NULL, NULL,    NULL,  NULL,           NULL,     "window length - essentially max expected hit length" ,          12 },
   { "--block_length", eslARG_INT,        NULL, NULL, "n>=50000", NULL, NULL,         NULL,     "length of blocks read from target database (threaded) ",        12 },
-  { "--watson",     eslARG_NONE,         NULL, NULL, NULL,    NULL,  NULL,       "--crick",  "only search the top strand",                                    12 },
-  { "--crick",      eslARG_NONE,         NULL, NULL, NULL,    NULL,  NULL,       "--watson",  "only search the bottom strand",                                 12 },
+  { "--watson",     eslARG_NONE,         NULL, NULL, NULL,    NULL,  NULL,       "--crick",    "only search the top strand",                                    12 },
+  { "--crick",      eslARG_NONE,         NULL, NULL, NULL,    NULL,  NULL,       "--watson",   "only search the bottom strand",                                 12 },
+  { "--stream-fasta", eslARG_NONE,      NULL, NULL, NULL,    NULL,  NULL,           NULL,     "load hmms into memory for streaming fa input.", 12},
 
 
   /* stage-specific window length used for bias composition estimate,
@@ -452,6 +453,7 @@ serial_master(ESL_GETOPTS *go, struct cfg_s *cfg)
   char   errbuf[eslERRBUFSIZE];
   double window_beta = -1.0 ;
   int window_length  = -1;
+  int stream_fasta = esl_opt_IsOn(go, "--stream-fasta");
 
   P7_BUILDER       *builder     = NULL;
 
@@ -558,13 +560,15 @@ serial_master(ESL_GETOPTS *go, struct cfg_s *cfg)
 
 
   /* Outer loop: over each query HMM or alignment in <queryfile>. */
-  HMM_VEC hv = p7_hmmvec_Create(hfp, abc);
+  HMM_VEC hv = stream_fasta ? p7_hmmvec_Create(hfp, abc): (HMM_VEC){NULL, (size_t)-1, 0};
+  /* If stream_fasta is False for the database (fasta), go until EOF in the HMMs
+     for space efficiency */
   for(unsigned hi = 0; hi < hv.n; ++hi) {
-      hmm = hv.h[hi];
+      /* if not streaming, check for EOF. */
+      if(stream_fasta) hmm = hv.h[hi];
+      else if((status = p7_hmmfile_Read(hfp, &abc, &hmm)) != eslOK) break;
       P7_PROFILE      *gm      = NULL;
       P7_OPROFILE     *om      = NULL;       /* optimized query profile                  */
-
-      //fprintf(stderr, "qhstatus: %i.\n", qhstatus);
 
 
       // Assign HMM max_length
@@ -582,11 +586,11 @@ serial_master(ESL_GETOPTS *go, struct cfg_s *cfg)
       if (nquery > 1) {
         {
           if (! esl_sqfile_IsRewindable(dbfp))
-            esl_fatal("Target sequence file %s isn't rewindable; can't search it with multiple queries", cfg->dbfile);
+            if(!stream_fasta)
+              esl_fatal("Target sequence file %s isn't rewindable; can't search it with multiple queries", cfg->dbfile);
 
         }
       }
-      LDB("Checked for rewinding needs.\n");
 
         if ( cfg->firstseq_key != NULL ) { //it's tempting to want to do this once and capture the offset position for future passes, but ncbi files make this non-trivial, so this keeps it general
           sstatus = esl_sqfile_PositionByKey(dbfp, cfg->firstseq_key);
@@ -603,7 +607,6 @@ serial_master(ESL_GETOPTS *go, struct cfg_s *cfg)
 
       scoredata = p7_hmm_ScoreDataCreate(om, NULL);
 
-      LDB("Building info for queue.\n");
       for (i = 0; i < infocnt; ++i) {
           /* Create processing pipeline and hit list */
           info[i].th  = p7_tophits_Create();
@@ -727,6 +730,7 @@ serial_master(ESL_GETOPTS *go, struct cfg_s *cfg)
       p7_oprofile_Destroy(info->om);
       p7_oprofile_Destroy(om);
       p7_profile_Destroy(gm);
+      if(stream_fasta == 0) p7_hmm_Destroy(hmm);
       destroy_id_length(id_length_list);
       if (qsq != NULL) esl_sq_Reuse(qsq);
 
@@ -735,7 +739,7 @@ serial_master(ESL_GETOPTS *go, struct cfg_s *cfg)
       }
 
   } /* end outer loop over queries */
-  p7_hmmvec_Destroy(&hv);
+  if(stream_fasta) p7_hmmvec_Destroy(&hv);
 
   if (hfp != NULL) {
     switch(qhstatus) {
