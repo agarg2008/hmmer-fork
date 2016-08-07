@@ -70,15 +70,17 @@ typedef struct {
   size_t        m;
 } HMM_VEC;
 
-HMM_VEC p7_hmmvec_Fill(P7_HMMFILE *hfp, ESL_ALPHABET *abc) {
+HMM_VEC p7_hmmvec_Create(P7_HMMFILE *hfp, ESL_ALPHABET *abc) {
   int status = eslOK;
   HMM_VEC hv = (HMM_VEC) {NULL, 0uL, 4uL};
   ESL_ALLOC(hv.h, 4uL * sizeof(P7_HMM *));
+  memset(hv.h, 0, sizeof(P7_HMM *) * 4uL);
   if(abc == NULL) p7_Fail("ESL_ALPHABET abc must be set to call %s.\n", __func__);
   while((status = p7_hmmfile_Read(hfp, &abc, hv.h + hv.n)) == eslOK) {
     if(++hv.n > hv.m) {
       hv.m = hv.n; kroundup32(hv.m);
       ESL_REALLOC(hv.h, hv.m * sizeof(P7_HMM *));
+      memset(hv.h + hv.n, 0, (hv.m - hv.n) * sizeof(P7_HMM *));
     }
   }
   LDB("Successfully loaded %lu hmm profiles.\n", hv.n);
@@ -89,8 +91,7 @@ HMM_VEC p7_hmmvec_Fill(P7_HMMFILE *hfp, ESL_ALPHABET *abc) {
 }
 
 void p7_hmmvec_Destroy(HMM_VEC *hv) {
-  unsigned i = hv->n;
-  while(i) p7_hmm_Destroy(hv->h[--i]);
+  while(hv->n) p7_hmm_Destroy(hv->h[--hv->n]);
   free(hv->h);
 }
 
@@ -141,7 +142,7 @@ static ESL_OPTIONS options[] = {
   { "--stats",           eslARG_OUTFILE,      NULL, NULL, NULL,    NULL,  NULL,  NULL,              "direct stats output to file <f>, not stderr",           2 },
   { "--noali",      eslARG_NONE,        FALSE, NULL, NULL,    NULL,  NULL,  NULL,            "don't output alignments, so output is smaller",                2 },
   { "--acc",      eslARG_NONE,        FALSE, NULL, NULL,    NULL,  NULL,  NULL,            "don't output alignments, so output is smaller",                2 },
-  { "--noheader",      eslARG_NONE,        FALSE, NULL, NULL,    NULL,  NULL,  NULL,            "Don't output header",                                     2 },
+  { "--print-header",      eslARG_NONE,        FALSE, NULL, NULL,    NULL,  NULL,  NULL,            "Print header. Default: False.",                                     2 },
   /* Control of scoring system */
   { "--singlemx",   eslARG_NONE,        FALSE,   NULL, NULL,    NULL,  NULL,   "",           "use substitution score matrix w/ single-sequence MSA-format inputs",  3 },
   { "--popen",      eslARG_REAL,       "0.03125",NULL,"0<=x<0.5",NULL, NULL, NULL,           "gap open probability",                                         3 },
@@ -318,7 +319,7 @@ process_commandline(int argc, char **argv, ESL_GETOPTS **ret_go, char **ret_quer
 static int
 output_header(FILE *ofp, const ESL_GETOPTS *go, char *queryfile, char *seqfile, int ncpus)
 {
-  if(esl_opt_IsUsed(go, "--noheader")) return eslOK;
+  if(!esl_opt_IsUsed(go, "--print-header")) return eslOK;
   p7_banner(ofp, go->argv[0], banner);
   if (fprintf(ofp, "# query file:                      %s\n", queryfile)                                                                                < 0) ESL_EXCEPTION_SYS(eslEWRITE, "write failed");
   if (fprintf(ofp, "# target sequence database:        %s\n", seqfile)                                                                                < 0) ESL_EXCEPTION_SYS(eslEWRITE, "write failed");
@@ -485,32 +486,33 @@ serial_master(ESL_GETOPTS *go, struct cfg_s *cfg)
     abc     = esl_alphabet_Create(eslRNA);
   if(!abc) fprintf(stderr, "Defaulting to DNA alphabet.\n"), abc = esl_alphabet_Create(eslDNA);
 
-  LDB("Trying to open %s.\n", cfg->queryfile);
   status = p7_hmmfile_OpenE(cfg->queryfile, NULL, &hfp, errbuf);
 
-  if      (status == eslENOTFOUND) {
-    // File just doesn't exist
-    p7_Fail("File existence/permissions problem in  == NULLtrying to open query file %s.\n%s\n", cfg->queryfile, errbuf);
-  } else if (status == eslOK) {
-    //Successfully read HMM file
-    qhstatus = p7_hmmfile_Read(hfp, &abc, &hmm);
-    if (qhstatus != eslOK) p7_Fail("reading hmm from file %s (%d)\n", cfg->queryfile, qhstatus);
+  switch(status) {
+    case eslENOTFOUND:
+      // File just doesn't exist
+      p7_Fail("File existence/permissions problem in  == NULLtrying to open query file %s.\n%s\n", cfg->queryfile, errbuf);
+    case eslOK:
+      //Successfully read HMM file
+      break;
+    default: p7_Fail("Unexpected error %i reading from file %s.\n", status, cfg->queryfile);
   }
-  fprintf(stderr, "abc: %p. ret: %i.\n", abc, qhstatus);
 
   /* Open the results output files */
-  if (esl_opt_IsOn(go, "-o"))              { if ((ofp      = fopen(esl_opt_GetString(go, "-o"), "w")) == NULL) p7_Fail("Failed to open output file %s for writing\n",    esl_opt_GetString(go, "-o")); }
-  if (esl_opt_IsOn(go, "--stats"))              { if ((statsfp      = fopen(esl_opt_GetString(go, "--stats"), "w")) == NULL) p7_Fail("Failed to open stats file %s for writing\n",    esl_opt_GetString(go, "-o")); }
-  LDB("out files open.\n");
+  if (esl_opt_IsOn(go, "-o"))
+    if ((ofp      = fopen(esl_opt_GetString(go, "-o"), "w")) == NULL)
+      p7_Fail("Failed to open output file %s for writing\n", esl_opt_GetString(go, "-o"));
+  if (esl_opt_IsOn(go, "--stats"))
+    if ((statsfp  = fopen(esl_opt_GetString(go, "--stats"), "w")) == NULL)
+      p7_Fail("Failed to open stats file %s for writing\n",  esl_opt_GetString(go, "-o"));
 
 
 #ifdef HMMER_THREADS
   /* initialize thread data */
-  if (esl_opt_IsOn(go, "--cpu")) ncpus = esl_opt_GetInteger(go, "--cpu");
-  else                                   esl_threads_CPUCount(&ncpus);
-
-
-  if (ncpus > 0) {
+  ncpus = esl_opt_IsOn(go, "--cpu") ? esl_opt_GetInteger(go, "--cpu")
+                                    : esl_threads_CPUCount(&ncpus);
+  if(ncpus < 0) p7_Fail("Can't use negative number of threads (%i).\n", ncpus);
+  if (ncpus) {
         threadObj = esl_threads_Create(&pipeline_thread);
         queue = esl_workqueue_Create(ncpus * 2);
   }
@@ -556,8 +558,9 @@ serial_master(ESL_GETOPTS *go, struct cfg_s *cfg)
 
 
   /* Outer loop: over each query HMM or alignment in <queryfile>. */
-  while (qhstatus == eslOK) {
-      LDB("Processing one thing.\n");
+  HMM_VEC hv = p7_hmmvec_Create(hfp, abc);
+  for(unsigned hi = 0; hi < hv.n; ++hi) {
+      hmm = hv.h[hi];
       P7_PROFILE      *gm      = NULL;
       P7_OPROFILE     *om      = NULL;       /* optimized query profile                  */
 
@@ -724,7 +727,6 @@ serial_master(ESL_GETOPTS *go, struct cfg_s *cfg)
       p7_oprofile_Destroy(info->om);
       p7_oprofile_Destroy(om);
       p7_profile_Destroy(gm);
-      p7_hmm_Destroy(hmm);
       destroy_id_length(id_length_list);
       if (qsq != NULL) esl_sq_Reuse(qsq);
 
@@ -733,6 +735,7 @@ serial_master(ESL_GETOPTS *go, struct cfg_s *cfg)
       }
 
   } /* end outer loop over queries */
+  p7_hmmvec_Destroy(&hv);
 
   if (hfp != NULL) {
     switch(qhstatus) {
