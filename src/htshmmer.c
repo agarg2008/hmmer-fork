@@ -18,17 +18,10 @@
 #include "esl_stopwatch.h"
 
 
-#ifdef __cplusplus
-#    define _FUNCTION_MACRO_ __PRETTY_FUNCTION__
-#    include <cstdlib>
-#    include <cstdio>
-#    include <cstdarg>
-#else
-#    define _FUNCTION_MACRO_ __func__
-#    include <stdlib.h>
-#    include <stdio.h>
-#    include <stdarg.h>
-#endif
+#define _FUNCTION_MACRO_ __func__
+#include <stdlib.h>
+#include <stdio.h>
+#include <stdarg.h>
 
 #ifndef kroundup32
 #define kroundup32(x) (--(x), (x)|=(x)>>1, (x)|=(x)>>2, (x)|=(x)>>4, (x)|=(x)>>8, (x)|=(x)>>16, ++(x))
@@ -85,8 +78,7 @@ HMM_VEC p7_hmmvec_Create(P7_HMMFILE *hfp, ESL_ALPHABET *abc) {
   }
   LDB("Successfully loaded %lu hmm profiles.\n", hv.n);
   return hv;
-  ERROR:
-    p7_Fail("Could not allocate memory.\n");
+  ERROR: p7_Fail("[%s]Could not allocate memory.\n", __func__);
   return hv;
 }
 
@@ -491,7 +483,7 @@ serial_master(ESL_GETOPTS *go, struct cfg_s *cfg)
   switch(status) {
     case eslENOTFOUND:
       // File just doesn't exist
-      p7_Fail("File existence/permissions problem in  == NULLtrying to open query file %s.\n%s\n", cfg->queryfile, errbuf);
+      p7_Fail("File existence/permissions problem in %s.\n%s\n", cfg->queryfile, errbuf);
     case eslOK:
       //Successfully read HMM file
       break;
@@ -520,7 +512,6 @@ serial_master(ESL_GETOPTS *go, struct cfg_s *cfg)
   infocnt = (ncpus) ? ncpus : 1;
   LDB("infocnt: %i.\n", infocnt);
   ESL_ALLOC(info, sizeof(*info) * infocnt);
-  fprintf(stderr, "Trying to allocate.\n");
 
   if (! (abc->type == eslRNA || abc->type == eslDNA))
     p7_Fail("Invalid alphabet type in hmm for nhmmer. Expect DNA or RNA\n");
@@ -561,6 +552,7 @@ serial_master(ESL_GETOPTS *go, struct cfg_s *cfg)
   HMM_VEC hv = stream_fasta ? p7_hmmvec_Create(hfp, abc): (HMM_VEC){NULL, (size_t)-1, 0};
   /* If stream_fasta is False for the database (fasta), go until EOF in the HMMs
      for space efficiency */
+  LDB("Starting loop.\n");
   for(unsigned hi = 0; hi < hv.n; ++hi) {
       /* if not streaming, check for EOF. */
       if(stream_fasta) hmm = hv.h[hi];
@@ -734,7 +726,7 @@ serial_master(ESL_GETOPTS *go, struct cfg_s *cfg)
   } /* end outer loop over queries */
   if(stream_fasta) p7_hmmvec_Destroy(&hv);
 
-  if (hfp != NULL) {
+  if (hfp != NULL && !stream_fasta) {
     switch(qhstatus) {
       case eslEOD:        p7_Fail("read failed, HMM file %s may be truncated?", cfg->queryfile);      break;
       case eslEFORMAT:    p7_Fail("bad file format in HMM file %s",             cfg->queryfile);      break;
@@ -871,7 +863,8 @@ serial_loop(WORKER_INFO *info, ID_LENGTH_LIST *id_length_list, ESL_SQFILE *dbfp,
   if (dbsq) esl_sq_Destroy(dbsq);
   if (dbsq_revcmp) esl_sq_Destroy(dbsq_revcmp);
 
-  ERROR: p7_Fail("Could not allocate memory.\n");
+  return wstatus;
+  ERROR: p7_Fail("[%s]Could not allocate memory.\n", __func__);
   return wstatus;
 
 }
@@ -1060,7 +1053,7 @@ pipeline_thread(void *arg)
 
   esl_threads_Finished(obj, workeridx);
   return;
-  ERROR: p7_Fail("Could not allocate memory.\n");
+  ERROR: p7_Fail("[%s]Could not allocate memory.\n", __func__);
 }
 
 
