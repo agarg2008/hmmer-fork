@@ -284,8 +284,6 @@ process_commandline(int argc, char **argv, ESL_GETOPTS **ret_go, char **ret_quer
 //      if (puts("\nOptions for restricting search to a range of target database sequences:")             < 0) ESL_XEXCEPTION_SYS(eslEWRITE, "write failed");
 //      esl_opt_DisplayHelp(stdout, go, 8, 2, 100);
 
-      if (puts("\nOptions controlling seed search heuristic:")               < 0) ESL_XEXCEPTION_SYS(eslEWRITE, "write failed");
-      esl_opt_DisplayHelp(stdout, go, 9, 2, 100);
 
       if (puts("\nOther expert options:")                                    < 0) ESL_XEXCEPTION_SYS(eslEWRITE, "write failed");
       esl_opt_DisplayHelp(stdout, go, 12, 2, 100);
@@ -566,7 +564,7 @@ serial_master(ESL_GETOPTS *go, struct cfg_s *cfg)
   for(unsigned hi = 0; hi < hv.n; ++hi) {
       /* if not streaming, check for EOF. */
       if(stream_fasta) hmm = hv.h[hi];
-      else if((status = p7_hmmfile_Read(hfp, &abc, &hmm)) != eslOK) break;
+      else if((qhstatus = p7_hmmfile_Read(hfp, &abc, &hmm)) != eslOK) break;
       P7_PROFILE      *gm      = NULL;
       P7_OPROFILE     *om      = NULL;       /* optimized query profile                  */
 
@@ -580,7 +578,6 @@ serial_master(ESL_GETOPTS *go, struct cfg_s *cfg)
       nquery++;
       resCnt = 0;
       esl_stopwatch_Start(w);
-      fprintf(stderr, "dbfp: %p.\n", dbfp);
 
       /* seqfile may need to be rewound (multiquery mode) */
       if (nquery > 1) {
@@ -733,10 +730,6 @@ serial_master(ESL_GETOPTS *go, struct cfg_s *cfg)
       if(stream_fasta == 0) p7_hmm_Destroy(hmm);
       destroy_id_length(id_length_list);
       if (qsq != NULL) esl_sq_Reuse(qsq);
-
-      if (hfp != NULL) {
-        qhstatus = p7_hmmfile_Read(hfp, &abc, &hmm);
-      }
 
   } /* end outer loop over queries */
   if(stream_fasta) p7_hmmvec_Destroy(&hv);
