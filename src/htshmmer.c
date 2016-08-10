@@ -33,8 +33,6 @@
 #    define LDB(...)
 #endif
 
-extern int   sqascii_ReadWindow     (ESL_SQFILE *sqfp, int C, int W, ESL_SQ *sq);
-
 static inline void log_debug(const char *func, const char *filename, int line, const char *fmt, ...) {
     va_list args;
     va_start(args, fmt);
@@ -806,81 +804,6 @@ serial_master(ESL_GETOPTS *go, struct cfg_s *cfg)
 
 //TODO: MPI code needs to be added here
 static int
-serial_loop_stream(WORKER_INFO *info, ID_LENGTH_LIST *id_length_list, ESL_SQFILE *dbfp, char *firstseq_key, int n_targetseqs/*, ESL_STOPWATCH *ssv_watch_master, ESL_STOPWATCH *postssv_watch_master, ESL_STOPWATCH *watch_slave*/)
-{
-
-  int      wstatus = eslOK;
-  int      status = eslOK;
-  int seq_id = 0;
-  ESL_SQ   *dbsq   =  esl_sq_CreateDigital(info->om->abc);
-#ifdef eslAUGMENT_ALPHABET
-  ESL_SQ   *dbsq_revcmp = NULL;
-
-
-  if (dbsq->abc->complement != NULL)
-    dbsq_revcmp =  esl_sq_CreateDigital(info->om->abc);
-#endif /*eslAUGMENT_ALPHABET*/
-
-  wstatus = esl_sqio_ReadWindow(dbfp, 0, info->pli->block_length, dbsq);
-
-  while (wstatus == eslOK && (n_targetseqs==-1 || seq_id < n_targetseqs) ) {
-      dbsq->idx = seq_id;
-      p7_pli_NewSeq(info->pli, dbsq);
-      ESL_REALLOC(dbsq->acc, dbsq->n + 1);
-      if((status = esl_abc_Textize(dbsq->abc, dbsq->dsq, dbsq->n, dbsq->acc) != eslOK))
-        p7_Fail("Error writing alphabetic sequence from binary: %i.\n", status);
-
-      if (info->pli->strands != p7_STRAND_BOTTOMONLY) {
-
-        info->pli->nres -= dbsq->C; // to account for overlapping region of windows
-        p7_Pipeline_LongTarget(info->pli, info->om, info->scoredata, info->bg, info->th, info->pli->nseqs, dbsq, p7_NOCOMPLEMENT, NULL, NULL, NULL/*, ssv_watch_master, postssv_watch_master, watch_slave*/);
-        p7_pipeline_Reuse(info->pli); // prepare for next search
-
-      } else {
-        info->pli->nres -= dbsq->n;
-      }
-#ifdef eslAUGMENT_ALPHABET
-      //reverse complement
-      if (info->pli->strands != p7_STRAND_TOPONLY && dbsq->abc->complement != NULL )
-      {
-          esl_sq_Copy(dbsq, dbsq_revcmp);
-          esl_sq_ReverseComplement(dbsq_revcmp);
-          ESL_REALLOC(dbsq_revcmp->acc, dbsq_revcmp->n + 1);
-          if((status = esl_abc_Textize(dbsq_revcmp->abc, dbsq_revcmp->dsq, dbsq_revcmp->n, dbsq_revcmp->acc) != eslOK))
-            p7_Fail("Error writing alphabetic sequence from binary: %i.\n", status);
-          p7_Pipeline_LongTarget(info->pli, info->om, info->scoredata, info->bg, info->th, info->pli->nseqs, dbsq_revcmp, p7_COMPLEMENT, NULL, NULL, NULL/*, ssv_watch_master, postssv_watch_master, watch_slave*/);
-          p7_pipeline_Reuse(info->pli); // prepare for next search
-
-          info->pli->nres += dbsq_revcmp->W;
-
-      }
-#endif /*eslAUGMENT_ALPHABET*/
-
-      wstatus = esl_sqio_ReadWindow(dbfp, info->om->max_length, info->pli->block_length, dbsq);
-      if (wstatus == eslEOD) { // no more left of this sequence ... move along to the next sequence.
-          add_id_length(id_length_list, dbsq->idx, dbsq->L);
-
-          info->pli->nseqs++;
-          esl_sq_Reuse(dbsq);
-          wstatus = esl_sqio_ReadWindow(dbfp, 0, info->pli->block_length, dbsq);
-
-          seq_id++;
-
-      }
-    }
-
-
-  if (dbsq) esl_sq_Destroy(dbsq);
-  if (dbsq_revcmp) esl_sq_Destroy(dbsq_revcmp);
-
-  return wstatus;
-  ERROR: p7_Fail("[%s]Could not allocate memory.\n", __func__);
-  return wstatus;
-
-}
-
-//TODO: MPI code needs to be added here
-static int
 serial_loop(WORKER_INFO *info, ID_LENGTH_LIST *id_length_list, ESL_SQFILE *dbfp, char *firstseq_key, int n_targetseqs/*, ESL_STOPWATCH *ssv_watch_master, ESL_STOPWATCH *postssv_watch_master, ESL_STOPWATCH *watch_slave*/)
 {
   int      wstatus = eslOK;
@@ -956,17 +879,15 @@ serial_loop(WORKER_INFO *info, ID_LENGTH_LIST *id_length_list, ESL_SQFILE *dbfp,
 
 
 ESL_SQ_BLOCK *load_all_seqs(ESL_SQFILE *dbfp, ESL_ALPHABET *abc, size_t step, size_t lim, size_t max_rlen) {
-  ESL_SQASCII_DATA *ascii = &dbfp->data.ascii;
   ESL_SQ_BLOCK *ret = esl_sq_CreateBlock(step);
   ESL_SQ      *tmpsq = esl_sq_CreateDigital(abc);
-  void         *newBlock;
   int status;
   while(ret->count < lim) {
       esl_sq_Reuse(tmpsq);
       esl_sq_Reuse(ret->list + ret->count);
       if(ret->count + step > ret->listSize) status = esl_sq_BlockGrowTo(ret, ret->count + step, 1, abc);
       if(status != eslEOF) p7_Fail("Unexpected error %i in [%s].\n", status, __func__);
-      status = sqascii_ReadWindow(dbfp, 0, max_rlen, ret->list + ret->count);
+      status = dbfp->read_window(dbfp, 0, max_rlen, ret->list + ret->count);
       if (status != eslOK && status != eslEOD) break; /* end of sequences (eslEOF), or we read an empty seq (eslEOD) or error (other)  */
       ret->list[ret->count].L = dbfp->data.ascii.L;
       ++(ret->count);
@@ -974,7 +895,7 @@ ESL_SQ_BLOCK *load_all_seqs(ESL_SQFILE *dbfp, ESL_ALPHABET *abc, size_t step, si
       esl_sq_Reuse(tmpsq);
       tmpsq->start =  ret->list[ret->count - 1].start;
       tmpsq->C = 0;
-      status = sqascii_ReadWindow(dbfp, 0, max_rlen, tmpsq);
+      status = dbfp->read_window(dbfp, 0, max_rlen, tmpsq);
 
       if (status != eslEOD) {
         if(tmpsq != NULL) esl_sq_Destroy(tmpsq);
