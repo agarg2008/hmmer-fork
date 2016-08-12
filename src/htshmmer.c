@@ -470,6 +470,11 @@ htshmmer_master(ESL_GETOPTS *go, struct cfg_s *cfg)
 
   wstatus = esl_sqio_ReadWindow(dbfp, 0, block_length, dbsq);
   if(wstatus != eslOK) p7_Fail("Failed to read first sequence from file.\n");
+  ESL_REALLOC(dbsq->acc, dbsq->n + 1);
+  if((status = esl_abc_Textize(dbsq->abc, dbsq->dsq, dbsq->n, dbsq->acc) != eslOK))
+   p7_Fail("Error writing alphabetic sequence from binary: %i.\n", status);
+  dbsq->L = dbsq->end - dbsq->start + 1;
+  add_id_length(id_length_list, seqid, dbsq->L);
 
   esl_stopwatch_Start(w);
   //Start main loop
@@ -524,10 +529,8 @@ htshmmer_master(ESL_GETOPTS *go, struct cfg_s *cfg)
           //if (dbsq) esl_sq_Destroy(dbsq);
           if (dbsq_revcmp) esl_sq_Reuse(dbsq_revcmp);
       }
-    ESL_REALLOC(dbsq->acc, dbsq->n + 1);
-    if((status = esl_abc_Textize(dbsq->abc, dbsq->dsq, dbsq->n, dbsq->acc) != eslOK))
-      p7_Fail("Error writing alphabetic sequence from binary: %i.\n", status);
 
+      LDB("dbsq->L: %i.\n", dbsq->L);
       for (int i = 0; i < infocnt; ++i)
           p7_tophits_ComputeNhmmerEvalues(info[i].th, resCnt, info[i].om->max_length);
       // Whittle down (not used, as this is currently single-threaded.
@@ -565,18 +568,22 @@ htshmmer_master(ESL_GETOPTS *go, struct cfg_s *cfg)
     if(qhstatus != eslEOF) p7_Fail("Unexpected error in reading hmm file %i.\n", qhstatus);
     p7_hmmfile_Position(hfp, 0); // Rewind to the beginning for the next loop.
     wstatus = esl_sqio_ReadWindow(dbfp, 0, block_length, dbsq);
-    if(wstatus == eslEOD) {
-          add_id_length(id_length_list, seqid, dbsq->L);
 
+    if(wstatus == eslEOD) {
           esl_sq_Reuse(dbsq);
           wstatus = esl_sqio_ReadWindow(dbfp, 0, block_length, dbsq);
           ++seqid;
+          ESL_REALLOC(dbsq->acc, dbsq->n + 1);
+          if((status = esl_abc_Textize(dbsq->abc, dbsq->dsq, dbsq->n, dbsq->acc) != eslOK))
+            p7_Fail("Error writing alphabetic sequence from binary: %i.\n", status);
+          add_id_length(id_length_list, seqid, dbsq->L);
     }
   }
 
 
   esl_stopwatch_Stop(w);
   esl_stopwatch_Display(statsfp, w, "# Total processing time: ");
+  esl_stopwatch_Destroy(w);
   // Clean up
   //
   ERROR:
@@ -590,7 +597,8 @@ htshmmer_master(ESL_GETOPTS *go, struct cfg_s *cfg)
   if(dbsq_revcmp) esl_sq_Destroy(dbsq_revcmp);
   if(ofp != stdout) fclose(ofp);
   if(statsfp != stderr) fclose(statsfp);
-  if (hfp)     p7_hmmfile_Close(hfp);
+  if(hfp) p7_hmmfile_Close(hfp);
+  if(dbfp) esl_sqfile_Close(dbfp);
   return sstatus;
 }
 
@@ -1335,12 +1343,11 @@ add_id_length(ID_LENGTH_LIST *list, int id, int L)
      // the last time this gets updated, it'll have the sequence's actual length
      list->id_lengths[list->count-1].length = L;
    } else {
-
      if (list->count == list->size) {
        list->size *= 10;
        ESL_REALLOC(list->id_lengths, list->size * sizeof(ID_LENGTH));
      }
-
+     LDB("Assigning id_length %i to id %i.\n", L, id);
      list->id_lengths[list->count].id     = id;
      list->id_lengths[list->count].length = L;
 
@@ -1354,7 +1361,6 @@ ERROR:
 
 static int
 assign_Lengths(P7_TOPHITS *th, ID_LENGTH_LIST *id_length_list) {
-
   int i;
   int j = 0;
   for (i=0; i<th->N; i++) {
