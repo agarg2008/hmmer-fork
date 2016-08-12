@@ -394,6 +394,101 @@ main(int argc, char **argv)
   return status;
 }
 
+static int
+htshmmer_master(ESL_GETOPTS *go, struct cfg_s *cfg)
+{
+  int sstatus                    = eslOK;
+  int status                     = eslOK; /* Memory status -- for ESL_*LOC macros */
+  int qhstatus                   = eslOK; /* query hmm status */
+  int wstatus                    = eslOK;
+  int infocnt                    = 1; /* placehold -- might never change */
+  FILE *ofp                      = stdout;
+  FILE *statsfp                  = stderr;
+  ESL_SQFILE *dbfp               = NULL;
+  ESL_ALPHABET *abc              = esl_alphabet_Create(eslDNA);
+  P7_HMM *hmm                    = NULL;
+  const int dbformat             = eslSQFILE_FASTA; /* format of dbfile          */
+  P7_SCOREDATA *scoredata        = NULL;
+  double resCnt                  = 0.;
+  ESL_STOPWATCH *w               = esl_stopwatch_Create();
+  double window_beta             = -1.0 ;
+  int window_length              = -1;
+  int stream_fasta               = esl_opt_IsOn(go, "--stream-fasta");
+  P7_HMMFILE *hfp                = NULL;              /* open input HMM file    */
+  P7_BUILDER *builder            = NULL;
+  ID_LENGTH_LIST *id_length_list = NULL;
+  P7_PROFILE *gm                 = NULL;
+  P7_OPROFILE *om                = NULL;       /* optimized query profile                  */
+  WORKER_INFO *info              = NULL;
+  char   errbuf[eslERRBUFSIZE];
+  ESL_SQ   *dbsq   =  esl_sq_CreateDigital(abc);
+#ifdef eslAUGMENT_ALPHABET
+  ESL_SQ   *dbsq_revcmp = NULL;
+  if (dbsq->abc->complement != NULL)
+    dbsq_revcmp =  esl_sq_CreateDigital(abc);
+#endif /*eslAUGMENT_ALPHABET*/
+  ESL_ALLOC(info, sizeof(*info) * infocnt);
+  for(int i = 0; i < 1; ++i) {
+    info[i].pli    = NULL;
+    info[i].th     = NULL;
+    info[i].om     = NULL;
+    info[i].bg = p7_bg_Create(abc);
+  }
+
+  // Set up
+  /* Open the target sequence database */
+  status = esl_sqfile_Open(cfg->dbfile, dbformat, p7_SEQDBENV, &dbfp);
+  switch(status) {
+       default:  p7_Fail("Unexpected error %d opening target sequence database file %s\n", status, cfg->dbfile);
+       case eslENOTFOUND: p7_Fail("Failed to open target sequence database %s for reading\n",      cfg->dbfile);
+       case eslEFORMAT:   p7_Fail("Target sequence database file %s is empty or misformatted\n",   cfg->dbfile);
+       case eslEINVAL:    p7_Fail("Can't autodetect format of a stdin or .gz seqfile");
+       case eslOK: break;
+  }
+  status = p7_hmmfile_OpenE(cfg->queryfile, NULL, &hfp, errbuf);
+  switch(status) {
+    case eslENOTFOUND:
+      // File just doesn't exist
+      p7_Fail("File existence/permissions problem in %s.\n%s\n", cfg->queryfile, errbuf);
+    case eslOK:
+      //Successfully read HMM file
+      break;
+    default: p7_Fail("Unexpected error %i reading from file %s.\n", status, cfg->queryfile);
+  }
+
+  /* Open the results output files */
+  if (esl_opt_IsOn(go, "-o"))
+    if ((ofp      = fopen(esl_opt_GetString(go, "-o"), "w")) == NULL)
+      p7_Fail("Failed to open output file %s for writing\n", esl_opt_GetString(go, "-o"));
+  if (esl_opt_IsOn(go, "--stats"))
+    if ((statsfp  = fopen(esl_opt_GetString(go, "--stats"), "w")) == NULL)
+      p7_Fail("Failed to open stats file %s for writing\n",  esl_opt_GetString(go, "-o"));
+
+
+  esl_stopwatch_Start(w);
+  //Start main loop
+  //
+  wstatus = esl_sqio_ReadWindow(dbfp, 0, info->pli->block_length, dbsq);
+  while(wstatus == eslOK) {
+    while((qhstatus = p7_hmmfile_Read(hfp, &abc, &hmm)) == eslOK) {
+    }
+    if(qhstatus != eslEOF) p7_Fail("Unexpected error in reading hmm file %i.\n", qhstatus);
+    p7_hmmfile_Position(hfp, 0); // Rewind to the beginning for the next loop.
+    wstatus = esl_sqio_ReadWindow(dbfp, 0, info->pli->block_length, dbsq);
+  }
+
+
+  esl_stopwatch_Stop(w);
+  // Clean up
+  //
+  ERROR:
+  if(ofp != stdout) fclose(ofp);
+  if(statsfp != stderr) fclose(statsfp);
+  if (hfp)     p7_hmmfile_Close(hfp);
+  esl_alphabet_Destroy(abc);
+  return sstatus;
+}
+
 
 
 /* serial_master()
@@ -412,7 +507,7 @@ serial_master(ESL_GETOPTS *go, struct cfg_s *cfg)
   /*Some fraction of these will be used, depending on what sort of input is used for the query*/
   P7_HMMFILE      *hfp        = NULL;              /* open input HMM file    */
   P7_HMM          *hmm        = NULL;              /* one HMM query          */
-  ESL_SQ          *qsq        = NULL;              /* query sequence         */
+  //ESL_SQ          *qsq        = NULL;              /* query sequence         */
 
   int              dbformat  =  eslSQFILE_FASTA; /* format of dbfile          */
   ESL_SQFILE      *dbfp      = NULL;               /* open input sequence file  */
@@ -444,7 +539,6 @@ serial_master(ESL_GETOPTS *go, struct cfg_s *cfg)
   double window_beta = -1.0 ;
   int window_length  = -1;
   int stream_fasta = esl_opt_IsOn(go, "--stream-fasta");
-
   P7_BUILDER       *builder     = NULL;
 
 
@@ -479,7 +573,6 @@ serial_master(ESL_GETOPTS *go, struct cfg_s *cfg)
   if(!abc) fprintf(stderr, "Defaulting to DNA alphabet.\n"), abc = esl_alphabet_Create(eslDNA);
 
   status = p7_hmmfile_OpenE(cfg->queryfile, NULL, &hfp, errbuf);
-
   switch(status) {
     case eslENOTFOUND:
       // File just doesn't exist
@@ -547,12 +640,10 @@ serial_master(ESL_GETOPTS *go, struct cfg_s *cfg)
 #endif
   }
 
-
   /* Outer loop: over each query HMM or alignment in <queryfile>. */
   HMM_VEC hv = stream_fasta ? p7_hmmvec_Create(hfp, abc): (HMM_VEC){NULL, (size_t)-1, 0};
   /* If stream_fasta is False for the database (fasta), go until EOF in the HMMs
      for space efficiency */
-  LDB("Starting loop.\n");
   for(unsigned hi = 0; hi < hv.n; ++hi) {
       /* if not streaming, check for EOF. */
       if(stream_fasta) hmm = hv.h[hi];
@@ -729,7 +820,7 @@ serial_master(ESL_GETOPTS *go, struct cfg_s *cfg)
       p7_profile_Destroy(gm);
       if(stream_fasta == 0) p7_hmm_Destroy(hmm);
       destroy_id_length(id_length_list);
-      if (qsq != NULL) esl_sq_Reuse(qsq);
+      //if (qsq != NULL) esl_sq_Reuse(qsq);
 
   } /* end outer loop over queries */
   if(stream_fasta) p7_hmmvec_Destroy(&hv);
@@ -777,9 +868,8 @@ serial_master(ESL_GETOPTS *go, struct cfg_s *cfg)
 
 
   if (hfp)     p7_hmmfile_Close(hfp);
-
   if (builder) p7_builder_Destroy(builder);
-  if (qsq)     esl_sq_Destroy(qsq);
+  //if (qsq)     esl_sq_Destroy(qsq);
 
   esl_sqfile_Close(dbfp);
   esl_alphabet_Destroy(abc);
@@ -795,7 +885,7 @@ serial_master(ESL_GETOPTS *go, struct cfg_s *cfg)
    if (hfp)     p7_hmmfile_Close(hfp);
 
    if (builder) p7_builder_Destroy(builder);
-   if (qsq)     esl_sq_Destroy(qsq);
+   //if (qsq)     esl_sq_Destroy(qsq);
 
    if (ofp != stdout) fclose(ofp);
 
@@ -876,7 +966,6 @@ serial_loop(WORKER_INFO *info, ID_LENGTH_LIST *id_length_list, ESL_SQFILE *dbfp,
   return wstatus;
 
 }
-
 
 ESL_SQ_BLOCK *load_all_seqs(ESL_SQFILE *dbfp, ESL_ALPHABET *abc, size_t step, size_t lim, size_t max_rlen) {
   ESL_SQ_BLOCK *ret = esl_sq_CreateBlock(step);
