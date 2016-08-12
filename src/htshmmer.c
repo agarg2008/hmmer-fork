@@ -225,6 +225,7 @@ static char banner[] = "search a DNA model or alignment against a DNA database";
 
 static int  serial_master  (ESL_GETOPTS *go, struct cfg_s *cfg);
 static int  serial_loop    (WORKER_INFO *info, ID_LENGTH_LIST *id_length_list, ESL_SQFILE *dbfp, char *firstseq_key, int n_targetseqs /*, ESL_STOPWATCH *ssv_watch_master, ESL_STOPWATCH *postssv_watch_master, ESL_STOPWATCH *watch_slave*/);
+static int htshmmer_master(ESL_GETOPTS *go, struct cfg_s *cfg);
 #ifdef HMMER_THREADS
 #define BLOCK_SIZE 1000
 
@@ -388,7 +389,8 @@ main(int argc, char **argv)
 
   process_commandline(argc, argv, &go, &cfg.queryfile, &cfg.dbfile);
 
-  status = serial_master(go, &cfg);
+  status = htshmmer_master(go, &cfg);
+  //status = serial_master(go, &cfg);
 
   esl_getopts_Destroy(go);
   return status;
@@ -402,6 +404,9 @@ htshmmer_master(ESL_GETOPTS *go, struct cfg_s *cfg)
   int qhstatus                   = eslOK; /* query hmm status */
   int wstatus                    = eslOK;
   int infocnt                    = 1; /* placehold -- might never change */
+  int block_length               = esl_opt_IsUsed(go, "--block_length") ? esl_opt_GetInteger(go, "--block_length")
+                                                                         : NHMMER_MAX_RESIDUE_COUNT;
+  int seqid                      = 0;
   FILE *ofp                      = stdout;
   FILE *statsfp                  = stderr;
   ESL_SQFILE *dbfp               = NULL;
@@ -413,22 +418,19 @@ htshmmer_master(ESL_GETOPTS *go, struct cfg_s *cfg)
   ESL_STOPWATCH *w               = esl_stopwatch_Create();
   double window_beta             = -1.0 ;
   int window_length              = -1;
-  int stream_fasta               = esl_opt_IsOn(go, "--stream-fasta");
   P7_HMMFILE *hfp                = NULL;              /* open input HMM file    */
   P7_BUILDER *builder            = NULL;
-  ID_LENGTH_LIST *id_length_list = NULL;
+  ID_LENGTH_LIST *id_length_list = init_id_length(1000);
   P7_PROFILE *gm                 = NULL;
   P7_OPROFILE *om                = NULL;       /* optimized query profile                  */
   WORKER_INFO *info              = NULL;
-  char   errbuf[eslERRBUFSIZE];
-  ESL_SQ   *dbsq   =  esl_sq_CreateDigital(abc);
-#ifdef eslAUGMENT_ALPHABET
-  ESL_SQ   *dbsq_revcmp = NULL;
-  if (dbsq->abc->complement != NULL)
-    dbsq_revcmp =  esl_sq_CreateDigital(abc);
-#endif /*eslAUGMENT_ALPHABET*/
+  char errbuf[eslERRBUFSIZE];
+  ESL_SQ *dbsq                   = esl_sq_CreateDigital(abc);
+  ESL_SQ *dbsq_revcmp            = dbsq->abc->complement ? esl_sq_CreateDigital(abc)
+                                                         : NULL;
+
   ESL_ALLOC(info, sizeof(*info) * infocnt);
-  for(int i = 0; i < 1; ++i) {
+  for(int i = 0; i < infocnt; ++i) {
     info[i].pli    = NULL;
     info[i].th     = NULL;
     info[i].om     = NULL;
@@ -439,12 +441,14 @@ htshmmer_master(ESL_GETOPTS *go, struct cfg_s *cfg)
   /* Open the target sequence database */
   status = esl_sqfile_Open(cfg->dbfile, dbformat, p7_SEQDBENV, &dbfp);
   switch(status) {
-       default:  p7_Fail("Unexpected error %d opening target sequence database file %s\n", status, cfg->dbfile);
-       case eslENOTFOUND: p7_Fail("Failed to open target sequence database %s for reading\n",      cfg->dbfile);
-       case eslEFORMAT:   p7_Fail("Target sequence database file %s is empty or misformatted\n",   cfg->dbfile);
-       case eslEINVAL:    p7_Fail("Can't autodetect format of a stdin or .gz seqfile");
-       case eslOK: break;
+     default:  p7_Fail("Unexpected error %d opening target sequence database file %s\n", status, cfg->dbfile);
+     case eslENOTFOUND: p7_Fail("Failed to open target sequence database %s for reading\n",      cfg->dbfile);
+     case eslEFORMAT:   p7_Fail("Target sequence database file %s is empty or misformatted\n",   cfg->dbfile);
+     case eslEINVAL:    p7_Fail("Can't autodetect format of a stdin or .gz seqfile");
+     case eslOK: break;
   }
+  dbfp->abc = abc;
+  // Open query hmmfile.
   status = p7_hmmfile_OpenE(cfg->queryfile, NULL, &hfp, errbuf);
   switch(status) {
     case eslENOTFOUND:
@@ -464,28 +468,129 @@ htshmmer_master(ESL_GETOPTS *go, struct cfg_s *cfg)
     if ((statsfp  = fopen(esl_opt_GetString(go, "--stats"), "w")) == NULL)
       p7_Fail("Failed to open stats file %s for writing\n",  esl_opt_GetString(go, "-o"));
 
+  wstatus = esl_sqio_ReadWindow(dbfp, 0, block_length, dbsq);
+  if(wstatus != eslOK) p7_Fail("Failed to read first sequence from file.\n");
 
   esl_stopwatch_Start(w);
   //Start main loop
-  //
-  wstatus = esl_sqio_ReadWindow(dbfp, 0, info->pli->block_length, dbsq);
   while(wstatus == eslOK) {
-    while((qhstatus = p7_hmmfile_Read(hfp, &abc, &hmm)) == eslOK) {
+    dbsq->idx = seqid;
+    qhstatus = p7_hmmfile_Read(hfp, &abc, &hmm);
+    while(qhstatus == eslOK) {
+      // Set up processing with this particular hmm
+      // Assign HMM max_length
+      if      (window_length > 0)     hmm->max_length = window_length;
+      else if (window_beta   > 0)     p7_Builder_MaxLength(hmm, window_beta);
+      else if (hmm->max_length == -1 ) p7_Builder_MaxLength(hmm, p7_DEFAULT_WINDOW_BETA);
+
+      gm = p7_profile_Create (hmm->M, abc);
+      om = p7_oprofile_Create(hmm->M, abc);
+      p7_ProfileConfig(hmm, info->bg, gm, 100, p7_LOCAL); /* 100 is a dummy length for now; and MSVFilter requires local mode */
+      p7_oprofile_Convert(gm, om);                  /* <om> is now p7_LOCAL, multihit */
+
+      scoredata = p7_hmm_ScoreDataCreate(om, NULL);
+      for(int i = 0; i < infocnt; ++i) {
+        info[i].pli    = NULL;
+        info[i].th     = NULL;
+        info[i].om     = NULL;
+      }
+      // Process
+      for (int i = 0; i < infocnt; ++i) {
+          /* Create processing pipeline and hit list */
+          info[i].th  = p7_tophits_Create();
+          info[i].om = p7_oprofile_Copy(om);
+          // Set up new pipeline.
+          info[i].pli = p7_pipeline_Create(go, om->M, 100, TRUE, p7_SEARCH_SEQS); /* L_hint = 100 is just a dummy for now */
+          p7_pli_NewModel(info[i].pli, info[i].om, info[i].bg);
+          info[i].pli->do_alignment_score_calc = 0;
+          info[i].pli->strands = p7_STRAND_BOTH;
+          info[i].pli->block_length =  esl_opt_IsUsed(go, "--block_length") ? esl_opt_GetInteger(go, "--block_length")
+                                                                            : NHMMER_MAX_RESIDUE_COUNT;
+          info[i].scoredata = p7_hmm_ScoreDataClone(scoredata, om->abc->Kp);
+
+          p7_pli_NewSeq(info->pli, dbsq);
+          info[i].pli->nres -= dbsq->C; // to account for overlapping region of windows
+          p7_Pipeline_LongTarget(info[i].pli, info->om, info->scoredata, info->bg, info->th, info->pli->nseqs, dbsq, p7_NOCOMPLEMENT, NULL, NULL, NULL/*, ssv_watch_master, postssv_watch_master, watch_slave*/);
+          p7_pipeline_Reuse(info[i].pli); // prepare for next search
+          esl_sq_Copy(dbsq, dbsq_revcmp);
+          esl_sq_ReverseComplement(dbsq_revcmp);
+          ESL_REALLOC(dbsq_revcmp->acc, dbsq_revcmp->n + 1);
+          if((status = esl_abc_Textize(dbsq_revcmp->abc, dbsq_revcmp->dsq, dbsq_revcmp->n, dbsq_revcmp->acc) != eslOK))
+            p7_Fail("Error writing alphabetic sequence from binary: %i.\n", status);
+          p7_Pipeline_LongTarget(info[i].pli, info[i].om, info[i].scoredata, info[i].bg, info[i].th, info[i].pli->nseqs, dbsq_revcmp, p7_COMPLEMENT, NULL, NULL, NULL/*, ssv_watch_master, postssv_watch_master, watch_slave*/);
+          p7_pipeline_Reuse(info[i].pli); // prepare for next search
+
+          info[i].pli->nres += dbsq_revcmp->W;
+          //if (dbsq) esl_sq_Destroy(dbsq);
+          if (dbsq_revcmp) esl_sq_Reuse(dbsq_revcmp);
+      }
+    ESL_REALLOC(dbsq->acc, dbsq->n + 1);
+    if((status = esl_abc_Textize(dbsq->abc, dbsq->dsq, dbsq->n, dbsq->acc) != eslOK))
+      p7_Fail("Error writing alphabetic sequence from binary: %i.\n", status);
+
+      for (int i = 0; i < infocnt; ++i)
+          p7_tophits_ComputeNhmmerEvalues(info[i].th, resCnt, info[i].om->max_length);
+      // Whittle down (not used, as this is currently single-threaded.
+
+      /* merge the results of the search results */
+      for (int i = 1; i < infocnt; ++i) {
+          p7_tophits_Merge(info[0].th, info[i].th);
+          p7_pipeline_Merge(info[0].pli, info[i].pli);
+
+          p7_pipeline_Destroy(info[i].pli);
+          p7_tophits_Destroy(info[i].th);
+          p7_oprofile_Destroy(info[i].om);
+      }
+
+      // Clean up/reuse.
+      p7_tophits_SortBySeqidxAndAlipos(info->th);
+      assign_Lengths(info->th, id_length_list);
+      p7_tophits_RemoveDuplicates(info->th, info->pli->use_bit_cutoffs);
+
+      p7_tophits_SortBySortkey(info->th);
+      p7_tophits_Threshold(info->th, info->pli);
+      p7_tophits_PrintHtsSummary(ofp, info->th, hmm->name, hmm->acc);
+
+      for (int i = 0; i < infocnt; ++i) {
+        p7_hmm_ScoreDataDestroy(info[i].scoredata);
+      }
+      p7_pipeline_Destroy(info->pli);
+      p7_tophits_Destroy(info->th);
+      p7_oprofile_Destroy(info->om);
+      p7_oprofile_Destroy(om);
+      p7_profile_Destroy(gm);
+      p7_hmm_Destroy(hmm);
+      qhstatus = p7_hmmfile_Read(hfp, &abc, &hmm);
     }
     if(qhstatus != eslEOF) p7_Fail("Unexpected error in reading hmm file %i.\n", qhstatus);
     p7_hmmfile_Position(hfp, 0); // Rewind to the beginning for the next loop.
-    wstatus = esl_sqio_ReadWindow(dbfp, 0, info->pli->block_length, dbsq);
+    wstatus = esl_sqio_ReadWindow(dbfp, 0, block_length, dbsq);
+    if(wstatus == eslEOD) {
+          add_id_length(id_length_list, seqid, dbsq->L);
+
+          esl_sq_Reuse(dbsq);
+          wstatus = esl_sqio_ReadWindow(dbfp, 0, block_length, dbsq);
+          ++seqid;
+    }
   }
 
 
   esl_stopwatch_Stop(w);
+  esl_stopwatch_Display(statsfp, w, "# Total processing time: ");
   // Clean up
   //
   ERROR:
+  for(int i = 0 ; i < infocnt; ++i) {
+      p7_bg_Destroy(info[i].bg);
+  }
+  free(info);
+  esl_alphabet_Destroy(abc);
+  destroy_id_length(id_length_list);
+  if(dbsq) esl_sq_Destroy(dbsq);
+  if(dbsq_revcmp) esl_sq_Destroy(dbsq_revcmp);
   if(ofp != stdout) fclose(ofp);
   if(statsfp != stderr) fclose(statsfp);
   if (hfp)     p7_hmmfile_Close(hfp);
-  esl_alphabet_Destroy(abc);
   return sstatus;
 }
 
@@ -909,7 +1014,6 @@ serial_loop(WORKER_INFO *info, ID_LENGTH_LIST *id_length_list, ESL_SQFILE *dbfp,
 #endif /*eslAUGMENT_ALPHABET*/
 
   wstatus = esl_sqio_ReadWindow(dbfp, 0, info->pli->block_length, dbsq);
-  LDB("First attempted ReadWindow: %i.\n", wstatus);
 
   while (wstatus == eslOK && (n_targetseqs==-1 || seq_id < n_targetseqs) ) {
       dbsq->idx = seq_id;
