@@ -557,6 +557,7 @@ htshmmer_master(ESL_GETOPTS *go, struct cfg_s *cfg)
       for (int i = 0; i < infocnt; ++i) {
         p7_hmm_ScoreDataDestroy(info[i].scoredata);
       }
+      p7_hmm_ScoreDataDestroy(scoredata);
       p7_pipeline_Destroy(info->pli);
       p7_tophits_Destroy(info->th);
       p7_oprofile_Destroy(info->om);
@@ -576,6 +577,7 @@ htshmmer_master(ESL_GETOPTS *go, struct cfg_s *cfg)
           ESL_REALLOC(dbsq->acc, dbsq->n + 1);
           if((status = esl_abc_Textize(dbsq->abc, dbsq->dsq, dbsq->n, dbsq->acc) != eslOK))
             p7_Fail("Error writing alphabetic sequence from binary: %i.\n", status);
+          dbsq->L = dbsq->end - dbsq->start + 1;
           add_id_length(id_length_list, seqid, dbsq->L);
     }
   }
@@ -1338,7 +1340,7 @@ static int
 add_id_length(ID_LENGTH_LIST *list, int id, int L)
 {
    int status;
-
+   if(L < 0) p7_Fail("Need length to be >= 0.\n");
    if (list->count > 0 && list->id_lengths[list->count-1].id == id) {
      // the last time this gets updated, it'll have the sequence's actual length
      list->id_lengths[list->count-1].length = L;
